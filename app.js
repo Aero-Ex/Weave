@@ -31,6 +31,7 @@ const state = {
     isDraggingNode: false, isResizingNode: false,
     resizedNode: null, selectedNodes: new Set(),
     activeTool: 'move',
+    activeEditorNode: null,
 };
 let isPanning = false, isBoxSelecting = false;
 let pointerStart = { x: 0, y: 0 };
@@ -71,7 +72,7 @@ const history = {
                 action.after.forEach(({ id }) => $(`[data-node-id="${id}"]`)?.remove());
                 break;
             case 'editor:modify':
-                this.applyEditorState(action.nodeId, action.before);
+                this.applyEditorState(action.nodeId, action.before, action.beforeMetadata);
                 break;
             default:
                 this.applyNodeState(action.before);
@@ -97,7 +98,7 @@ const history = {
                 });
                 break;
             case 'editor:modify':
-                this.applyEditorState(action.nodeId, action.after);
+                this.applyEditorState(action.nodeId, action.after, action.metadata);
                 break;
             default:
                 this.applyNodeState(action.after);
@@ -125,16 +126,23 @@ const history = {
         });
     },
 
-    applyEditorState(nodeId, dataUrl) {
+    applyEditorState(nodeId, dataUrl, metadata) {
         const ed = editor2dInstances.get(nodeId);
-        if (ed && dataUrl) {
-            const img = new Image();
-            img.onload = () => {
-                ed.ctx.clearRect(0, 0, ed.canvas.width, ed.canvas.height);
-                ed.ctx.drawImage(img, 0, 0, ed.canvas.width, ed.canvas.height);
-            };
-            img.src = dataUrl;
-        }
+        if (!ed || !dataUrl) return;
+    
+        const img = new Image();
+        img.onload = () => {
+            ed.bgImage = img;
+            if (metadata && metadata.pos) {
+                ed.bgImagePos = { ...metadata.pos };
+                ed.bgImageScale = metadata.scale;
+            } else {
+                ed.bgImagePos = { x: 0, y: 0 };
+                ed.bgImageScale = 1;
+            }
+            redrawEditor(ed);
+        };
+        img.src = dataUrl;
     },
 
     updateButtons() {
@@ -243,19 +251,22 @@ function zoomTo(nextZoom, center = null) {
 
 function onPointerDown(e) {
     if (state.locked || e.button !== 0) return;
-    const editorCanvasContainer = e.target.closest('.editor-canvas-container');
-    if (editorCanvasContainer) {
-        if (state.activeTool === 'text') {
-            handleCreativeToolPointerDown(e, null);
-            return;
-        }
-    }
+    
+    // Editor nodes have their own pointerdown handlers which stop propagation.
+    // This code runs for events on the main canvas or non-editor nodes.
     const targetNode = e.target.closest('.canvas-node');
     const resizeHandle = e.target.closest('.canvas-node__resizer');
-    if (resizeHandle) handleNodeResizeStart(e, resizeHandle);
-    else if (targetNode) handleNodeDragStart(e, targetNode);
-    else if (state.activeTool === 'select' || (state.activeTool === 'move' && e.shiftKey)) handleBoxSelectStart(e);
-    else if (state.activeTool === 'move') handlePanStart(e);
+
+    if (resizeHandle) {
+        handleNodeResizeStart(e, resizeHandle);
+    } else if (targetNode) {
+        handleNodeDragStart(e, targetNode);
+    } else if (state.activeTool === 'select') {
+        handleBoxSelectStart(e);
+    } else {
+        // Default action when clicking canvas background is to pan
+        handlePanStart(e);
+    }
 }
 
 function onPointerMove(e) {
@@ -330,29 +341,6 @@ function onPointerUp(e) {
     }
 }
 
-function handleCreativeToolPointerDown(e, _unused) {
-    if (state.activeTool !== 'text') return;
-    const nodeEl = e.target.closest('.canvas-node');
-    if (!nodeEl) return;
-    const ed = editor2dInstances.get(nodeEl.dataset.nodeId);
-    if (!ed) return;
-    const rect = ed.canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left);
-    const y = (e.clientY - rect.top);
-
-    const before = ed.canvas.toDataURL();
-
-    ed.ctx.save();
-    ed.ctx.fillStyle = colorPicker.value;
-    ed.ctx.font = '24px Arial';
-    ed.ctx.textBaseline = 'top';
-    ed.ctx.fillText('Your Text Here', x, y);
-    ed.ctx.restore();
-
-    const after = ed.canvas.toDataURL();
-    history.add({ type: 'editor:modify', nodeId: nodeEl.dataset.nodeId, before, after });
-}
-
 function handleNodeResizeStart(e, resizeHandle) {
     e.stopPropagation();
     state.isResizingNode = true;
@@ -376,6 +364,9 @@ function handleNodeResizeStart(e, resizeHandle) {
 }
 
 function handleNodeDragStart(e, targetNode) {
+    // Prevent dragging node content from moving the node
+    if (e.target.closest('.canvas-node__content')) return;
+
     if (e.shiftKey) toggleNodeSelection(targetNode);
     else if (!state.selectedNodes.has(targetNode)) selectSingleNode(targetNode);
     state.isDraggingNode = true;
@@ -444,6 +435,14 @@ function screenToWorld(clientX, clientY) {
     return { x, y };
 }
 
+function getRelativePointerPos(event, element) {
+    const rect = element.getBoundingClientRect();
+    return {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top
+    };
+}
+
 function createNode(type, x, y, restorationState = null) {
     const nodeId = restorationState ? restorationState.id : `${type}-${Date.now()}`;
     if ($(`[data-node-id="${nodeId}"]`)) return;
@@ -455,7 +454,7 @@ function createNode(type, x, y, restorationState = null) {
     const nodeTemplates = {
         text: `<header class="canvas-node__header"><span>Text Prompt</span><span class="model-tag">User Input</span></header><div class="canvas-node__content"><textarea class="prompt-textarea" placeholder="Describe what you want to create..."></textarea></div><div class="canvas-node__resizer"></div>`,
         'image-upload': `<header class="canvas-node__header"><span>Image Upload</span><span class="model-tag">Local File</span></header><div class="canvas-node__content canvas-node__content--image-upload"><div class="image-upload-empty-state"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg><span>Upload or drop image</span></div><input type="file" accept="image/*" style="display: none;" /></div><div class="canvas-node__resizer"></div>`,
-        'image-editor': `<header class="canvas-node__header"><span>Draw to Edit</span><span class="model-tag">Nano Banana</span></header><div class="canvas-node__content canvas-node__content--editor"><div class="editor-canvas-container"><canvas class="image-editor-canvas"></canvas></div><div class="editor-empty-state"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg><span>Drop image to start</span><input type="file" accept="image/*" style="display: none;" /></div></div><div class="canvas-node__footer canvas-node__footer--editor"><input type="text" class="editor-prompt-input" placeholder="Describe the edit..."><button class="edit-mask-button">Edit</button></div><div class="canvas-node__resizer"></div>`
+        'image-editor': `<header class="canvas-node__header"><span>Draw to Edit</span><span class="model-tag">Nano Banana</span></header><div class="canvas-node__content canvas-node__content--editor"><div class="editor-canvas-container"><canvas class="image-editor-canvas"></canvas></div><div class="editor-empty-state"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg><span>Drop image to start</span><input type="file" accept="image/*" style="display: none;" /></div></div><div class="canvas-node__footer canvas-node__footer--editor"><input type="text" class="editor-prompt-input" placeholder="Describe the edit..."><button class="edit-mask-button">Edit</button><button class="crop-confirm-button" style="display:none;">Apply Crop</button></div><div class="canvas-node__resizer"></div>`
     };
     if (!nodeTemplates[type]) { console.error("Unknown node type:", type); return; }
     nodeEl.innerHTML = nodeTemplates[type];
@@ -520,44 +519,93 @@ function resizeEditorCanvas(ed, width, height) {
 }
 
 function redrawEditor(ed) {
+    if (!ed.canvas) return;
+    const { canvas, ctx } = ed;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
     if (ed.bgImage) {
-        const { canvas, ctx } = ed;
         ctx.save();
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        const cw = canvas.width, ch = canvas.height;
-        const ia = ed.bgImage.width / ed.bgImage.height;
-        const ca = cw / ch;
-        let dw, dh;
-        if (ca > ia) { dh = ch; dw = ia * dh; } else { dw = cw; dh = dw / ia; }
-        const dx = (cw - dw) / 2, dy = (ch - dh) / 2;
-        ctx.drawImage(ed.bgImage, dx, dy, dw, dh);
+        const { x, y, w, h } = getDrawnImageRect(ed);
+        ctx.drawImage(ed.bgImage, x, y, w, h);
+        ctx.restore();
+    }
+
+    if (ed.isCroppingActive || ed.isDefiningCropArea) {
+        const { x, y, w, h } = ed.cropBox;
+        const normBox = {
+            x: w < 0 ? x + w : x,
+            y: h < 0 ? y + h : y,
+            w: Math.abs(w),
+            h: Math.abs(h),
+        };
+        ctx.save();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+        ctx.beginPath();
+        ctx.rect(0, 0, canvas.width, canvas.height);
+        ctx.rect(normBox.x + normBox.w, normBox.y, -normBox.w, normBox.h);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(normBox.x, normBox.y, normBox.w, normBox.h);
+        
+        if (ed.isCroppingActive) {
+            ctx.fillStyle = "white";
+            ed.handles.forEach(handle => ctx.fillRect(handle.x - 4, handle.y - 4, 8, 8));
+        }
         ctx.restore();
     }
 }
+
+function getDrawnImageRect(ed) {
+    const { canvas, bgImage, bgImagePos, bgImageScale } = ed;
+    if (!bgImage) return { x: 0, y: 0, w: 0, h: 0 };
+    
+    const cw = canvas.width;
+    const ch = canvas.height;
+    const imgAspectRatio = bgImage.width / bgImage.height;
+    const canvasAspectRatio = cw / ch;
+    let baseW, baseH;
+
+    if (canvasAspectRatio > imgAspectRatio) {
+        baseH = ch; baseW = baseH * imgAspectRatio;
+    } else {
+        baseW = cw; baseH = baseW / imgAspectRatio;
+    }
+
+    const w = baseW * bgImageScale;
+    const h = baseH * bgImageScale;
+    const x = (cw - w) / 2 + bgImagePos.x;
+    const y = (ch - h) / 2 + bgImagePos.y;
+    return { x, y, w, h };
+}
+
 
 function initializeImageEditorNode(nodeEl) {
     const canvasContainer = nodeEl.querySelector('.editor-canvas-container');
     const canvas = nodeEl.querySelector('.image-editor-canvas');
     const emptyState = nodeEl.querySelector('.editor-empty-state');
     const fileInput = nodeEl.querySelector('input[type="file"]');
+    const cropConfirmBtn = nodeEl.querySelector('.crop-confirm-button');
 
     if (!canvas || !canvasContainer || !emptyState || !fileInput) return;
 
     const ctx = canvas.getContext('2d');
     const ed = {
-        nodeId: nodeEl.dataset.nodeId,
-        container: canvasContainer,
-        canvas,
-        ctx,
-        drawing: false,
-        last: { x: 0, y: 0 },
-        bgImage: null,
+        nodeId: nodeEl.dataset.nodeId, container: canvasContainer, canvas, ctx,
+        nodeEl,
+        drawing: false, isMovingImage: false, isTransforming: false,
+        bgImage: null, bgImagePos: { x: 0, y: 0 }, bgImageScale: 1,
+        moveStart: { pointer: {x: 0, y: 0}, image: {x: 0, y: 0} },
+        opStart: { x: 0, y: 0 },
+        transformStart: { scale: 1, y: 0 },
+        
+        isDefiningCropArea: false, isCroppingActive: false,
+        cropBox: { x: 0, y: 0, w: 0, h: 0 },
+        cropStartBox: null,
+        handles: [], activeHandle: null, isMovingCropBox: false,
     };
     editor2dInstances.set(ed.nodeId, ed);
-
-    const contentArea = nodeEl.querySelector('.canvas-node__content');
-    contentArea.addEventListener('pointerdown', e => e.stopPropagation());
-
+    
     const ro = new ResizeObserver(entries => {
         for (const entry of entries) {
             const { width, height } = entry.contentRect;
@@ -567,54 +615,138 @@ function initializeImageEditorNode(nodeEl) {
     });
     ro.observe(canvasContainer);
 
-    const getPos = (e) => {
-        const rect = canvas.getBoundingClientRect();
-        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    };
-
     let beforeSnapshot = null;
 
-    const pointerdown = (e) => {
-        if (!['pen','eraser','mask'].includes(state.activeTool)) return;
-        e.preventDefault();
-        beforeSnapshot = canvas.toDataURL();
-        ed.drawing = true;
-        const p = getPos(e);
-        ed.last = p;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.lineWidth = parseInt(thicknessSlider.value, 10) || 5;
-        if (state.activeTool === 'eraser') {
-            ctx.globalCompositeOperation = 'destination-out';
-            ctx.strokeStyle = 'rgba(0,0,0,1)';
+    const onEditorPointerMove = (e) => {
+        if (ed.isDefiningCropArea || ed.isCroppingActive) {
+            handleCropPointerMove(e, ed);
         } else {
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.strokeStyle = colorPicker.value;
+            const p = getRelativePointerPos(e, canvas);
+            switch(state.activeTool) {
+                case 'move':
+                    if (ed.isMovingImage) {
+                        const dx = p.x - ed.moveStart.pointer.x;
+                        const dy = p.y - ed.moveStart.pointer.y;
+                        ed.bgImagePos.x = ed.moveStart.image.x + dx;
+                        ed.bgImagePos.y = ed.moveStart.image.y + dy;
+                        redrawEditor(ed);
+                    }
+                    break;
+                case 'pen': case 'eraser':
+                    if (ed.drawing) { ctx.lineTo(p.x, p.y); ctx.stroke(); }
+                    break;
+                case 'transform':
+                     if(ed.isTransforming) {
+                        const dy = ed.transformStart.y - p.y;
+                        const scaleFactor = 1 + (dy / 200);
+                        ed.bgImageScale = Math.max(0.1, ed.transformStart.scale * scaleFactor);
+                        redrawEditor(ed);
+                     }
+                    break;
+            }
         }
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-    };
-    const pointermove = (e) => {
-        if (!ed.drawing) return;
-        const p = getPos(e);
-        ctx.lineTo(p.x, p.y);
-        ctx.stroke();
-        ed.last = p;
-    };
-    const pointerup = () => {
-        if (!ed.drawing) return;
-        ed.drawing = false;
-        const after = canvas.toDataURL();
-        if (!isApplyingHistory && beforeSnapshot && after !== beforeSnapshot) {
-            history.add({ type: 'editor:modify', nodeId: ed.nodeId, before: beforeSnapshot, after });
-        }
-        beforeSnapshot = null;
-        ctx.globalCompositeOperation = 'source-over';
     };
 
-    canvas.addEventListener('pointerdown', pointerdown);
-    window.addEventListener('pointermove', pointermove);
-    window.addEventListener('pointerup', pointerup);
+    const onEditorPointerUp = (e) => {
+        if (ed.isDefiningCropArea) {
+            ed.isDefiningCropArea = false;
+            
+            // Normalize the crop box
+            if (ed.cropBox.w < 0) {
+                ed.cropBox.x += ed.cropBox.w;
+                ed.cropBox.w = Math.abs(ed.cropBox.w);
+            }
+            if (ed.cropBox.h < 0) {
+                ed.cropBox.y += ed.cropBox.h;
+                ed.cropBox.h = Math.abs(ed.cropBox.h);
+            }
+
+            if(ed.cropBox.w > 5 && ed.cropBox.h > 5) {
+                ed.isCroppingActive = true;
+                updateCropHandles(ed);
+                redrawEditor(ed);
+                ed.nodeEl.querySelector('.crop-confirm-button').style.display = 'block';
+                ed.nodeEl.querySelector('.edit-mask-button').style.display = 'none';
+            } else {
+                redrawEditor(ed); // Redraw to remove the tiny box
+            }
+        }
+
+        ed.isMovingImage = false;
+        ed.isTransforming = false;
+        ed.activeHandle = null;
+        ed.isMovingCropBox = false;
+
+        if (ed.drawing) {
+            ed.drawing = false;
+            const after = canvas.toDataURL();
+            const metadata = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale };
+            const beforeMeta = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale }; // Capture state before drawing
+            if (!isApplyingHistory && beforeSnapshot && after !== beforeSnapshot) {
+                history.add({ type: 'editor:modify', nodeId: ed.nodeId, before: beforeSnapshot, after, metadata, beforeMetadata: beforeMeta });
+            }
+            beforeSnapshot = null;
+            ctx.globalCompositeOperation = 'source-over';
+        }
+        
+        window.removeEventListener('pointermove', onEditorPointerMove);
+        window.removeEventListener('pointerup', onEditorPointerUp);
+    };
+
+    const onEditorPointerDown = (e) => {
+        e.stopPropagation(); 
+        state.activeEditorNode = ed;
+        
+        if (state.activeTool === 'crop') {
+            handleCropPointerDown(e, ed);
+        } else {
+            if (ed.isCroppingActive) endCrop(ed, false);
+            
+            const p = getRelativePointerPos(e, canvas);
+            ed.opStart = p;
+            
+            switch (state.activeTool) {
+                case 'move':
+                    if (ed.bgImage) {
+                        ed.isMovingImage = true;
+                        ed.moveStart.pointer = p;
+                        ed.moveStart.image = { ...ed.bgImagePos };
+                    }
+                    break;
+                case 'pen': case 'eraser': case 'mask':
+                    beforeSnapshot = canvas.toDataURL();
+                    ed.drawing = true;
+                    Object.assign(ctx, { lineCap: 'round', lineJoin: 'round', lineWidth: parseInt(thicknessSlider.value, 10) || 5 });
+                    ctx.globalCompositeOperation = (state.activeTool === 'eraser') ? 'destination-out' : 'source-over';
+                    ctx.strokeStyle = (state.activeTool === 'eraser') ? 'rgba(0,0,0,1)' : colorPicker.value;
+                    ctx.beginPath();
+                    ctx.moveTo(p.x, p.y);
+                    break;
+                case 'text':
+                    beforeSnapshot = canvas.toDataURL();
+                    const metadata = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale };
+                    Object.assign(ctx, { fillStyle: colorPicker.value, font: '24px Arial', textBaseline: 'top' });
+                    ctx.fillText('Your Text Here', p.x, p.y);
+                    const after = canvas.toDataURL();
+                    history.add({ type: 'editor:modify', nodeId: ed.nodeId, before: beforeSnapshot, after, metadata });
+                    break;
+                case 'transform':
+                    if (ed.bgImage) {
+                        ed.isTransforming = true;
+                        ed.transformStart.scale = ed.bgImageScale;
+                        ed.transformStart.y = p.y;
+                    }
+                    break;
+            }
+        }
+        
+        window.addEventListener('pointermove', onEditorPointerMove);
+        window.addEventListener('pointerup', onEditorPointerUp, { once: true });
+    };
+
+    const contentArea = nodeEl.querySelector('.canvas-node__content--editor');
+    contentArea.addEventListener('pointerdown', onEditorPointerDown);
+    cropConfirmBtn.addEventListener('click', () => endCrop(ed, true));
 
     const loadAndDisplayImage = file => {
         if (!file?.type.startsWith('image/')) return;
@@ -638,7 +770,131 @@ function initializeImageEditorNode(nodeEl) {
     });
 }
 
-function updateCreativeTool() {}
+function updateCropHandles(ed) {
+    const { x, y, w, h } = ed.cropBox;
+    ed.handles = [
+        { x: x, y: y, cursor: 'nwse-resize', name: 'tl' },
+        { x: x + w / 2, y: y, cursor: 'ns-resize', name: 'tm' },
+        { x: x + w, y: y, cursor: 'nesw-resize', name: 'tr' },
+        { x: x + w, y: y + h / 2, cursor: 'ew-resize', name: 'mr' },
+        { x: x + w, y: y + h, cursor: 'nwse-resize', name: 'br' },
+        { x: x + w / 2, y: y + h, cursor: 'ns-resize', name: 'bm' },
+        { x: x, y: y + h, cursor: 'nesw-resize', name: 'bl' },
+        { x: x, y: y + h / 2, cursor: 'ew-resize', name: 'ml' },
+    ];
+}
+
+function endCrop(ed, apply) {
+    if (!ed.isCroppingActive) {
+        ed.isDefiningCropArea = false; // Ensure defining is also stopped
+        return;
+    }
+
+    if (apply) {
+        const { x, y, w, h } = ed.cropBox;
+        if (w > 1 && h > 1) {
+            const before = ed.bgImage.src;
+            const beforeMeta = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale };
+
+            const imgRect = getDrawnImageRect(ed);
+            
+            const sourceX = ((x - imgRect.x) / imgRect.w) * ed.bgImage.width;
+            const sourceY = ((y - imgRect.y) / imgRect.h) * ed.bgImage.height;
+            const sourceW = (w / imgRect.w) * ed.bgImage.width;
+            const sourceH = (h / imgRect.h) * ed.bgImage.height;
+
+            const finalCanvas = document.createElement('canvas');
+            finalCanvas.width = sourceW;
+            finalCanvas.height = sourceH;
+            finalCanvas.getContext('2d').drawImage(ed.bgImage, sourceX, sourceY, sourceW, sourceH, 0, 0, sourceW, sourceH);
+            
+            const newImage = new Image();
+            newImage.onload = () => {
+                ed.bgImage = newImage;
+                ed.bgImagePos = { x: 0, y: 0 };
+                ed.bgImageScale = 1;
+                const after = newImage.src;
+                const afterMeta = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale };
+                history.add({ type: 'editor:modify', nodeId: ed.nodeId, before, after, metadata: afterMeta, beforeMetadata: beforeMeta });
+            };
+            newImage.src = finalCanvas.toDataURL();
+        }
+    }
+    
+    ed.isCroppingActive = false;
+    ed.isDefiningCropArea = false;
+    ed.nodeEl.querySelector('.crop-confirm-button').style.display = 'none';
+    ed.nodeEl.querySelector('.edit-mask-button').style.display = 'block';
+    redrawEditor(ed);
+}
+
+function handleCropPointerDown(e, ed) {
+    const pos = getRelativePointerPos(e, ed.canvas);
+    
+    if (ed.isCroppingActive) {
+        const handleHitbox = 8;
+        ed.activeHandle = ed.handles.find(h => Math.abs(pos.x - h.x) < handleHitbox && Math.abs(pos.y - h.y) < handleHitbox) || null;
+        
+        if (ed.activeHandle) {
+            ed.isMovingCropBox = false;
+            ed.cropStartBox = { ...ed.cropBox };
+        } else if (pos.x > ed.cropBox.x && pos.x < ed.cropBox.x + ed.cropBox.w && pos.y > ed.cropBox.y && pos.y < ed.cropBox.y + ed.cropBox.h) {
+            ed.isMovingCropBox = true;
+        } else {
+             endCrop(ed, false);
+             return;
+        }
+    } else { 
+        if (!ed.bgImage) return;
+        ed.isDefiningCropArea = true;
+        ed.cropBox = { x: pos.x, y: pos.y, w: 0, h: 0 };
+    }
+    ed.opStart = pos;
+}
+
+function handleCropPointerMove(e, ed) {
+    const pos = getRelativePointerPos(e, ed.canvas);
+    
+    if (ed.isDefiningCropArea) {
+        ed.cropBox.w = pos.x - ed.opStart.x;
+        ed.cropBox.h = pos.y - ed.opStart.y;
+        redrawEditor(ed);
+        return;
+    }
+
+    const dx = pos.x - ed.opStart.x;
+    const dy = pos.y - ed.opStart.y;
+
+    if (ed.activeHandle) {
+        const { name } = ed.activeHandle;
+        const start = ed.cropStartBox;
+        
+        if (name.includes('l')) { ed.cropBox.x = start.x + dx; ed.cropBox.w = start.w - dx; }
+        if (name.includes('r')) { ed.cropBox.w = start.w + dx; }
+        if (name.includes('t')) { ed.cropBox.y = start.y + dy; ed.cropBox.h = start.h - dy; }
+        if (name.includes('b')) { ed.cropBox.h = start.h + dy; }
+
+        if (e.shiftKey && (name === 'tl' || name === 'tr' || name === 'bl' || name === 'br')) {
+            const aspect = start.w / start.h;
+            if (name.includes('l') || name.includes('r')) ed.cropBox.h = ed.cropBox.w / aspect;
+            else ed.cropBox.w = ed.cropBox.h * aspect;
+        }
+
+    } else if (ed.isMovingCropBox) {
+        ed.cropBox.x += dx;
+        ed.cropBox.y += dy;
+        ed.opStart = pos; 
+    } else {
+        const handle = ed.handles.find(h => Math.abs(pos.x - h.x) < 8 && Math.abs(pos.y - h.y) < 8);
+        ed.canvas.style.cursor = handle ? handle.cursor : (ed.isCroppingActive ? 'move' : 'crosshair');
+    }
+
+    if(ed.isCroppingActive) {
+        updateCropHandles(ed);
+        redrawEditor(ed);
+    }
+}
+
 
 function updateAllEditorTools() {}
 
@@ -702,6 +958,18 @@ function onMinimapClick(e) {
 
 function handleKeyboard(e) {
     if (['textarea', 'input'].includes(e.target.tagName.toLowerCase())) return;
+
+    if (state.activeEditorNode && state.activeEditorNode.isCroppingActive) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            endCrop(state.activeEditorNode, true);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            endCrop(state.activeEditorNode, false);
+        }
+        return;
+    }
+
     if (e.ctrlKey || e.metaKey) {
         if (e.key === 'z') { e.preventDefault(); history.undo(); } 
         else if (e.key === 'y') { e.preventDefault(); history.redo(); }
@@ -726,8 +994,6 @@ function handleKeyboard(e) {
 function bindEvents() {
     canvasEl.addEventListener("wheel", onWheel, { passive: false });
     canvasEl.addEventListener("pointerdown", onPointerDown);
-    canvasEl.addEventListener("pointermove", onPointerMove);
-    canvasEl.addEventListener("pointerup", onPointerUp);
     canvasEl.addEventListener("contextmenu", showAddNodeMenu);
 
     zoomInBtn.addEventListener("click", () => zoomTo(state.zoom + ZOOM.step));
@@ -740,30 +1006,26 @@ function bindEvents() {
         const button = e.target.closest('button[data-tool]');
         if (button) {
             const tool = button.dataset.tool;
-            
+            if (state.activeTool === 'crop' && tool !== 'crop' && state.activeEditorNode) {
+                 endCrop(state.activeEditorNode, false);
+            }
+
             $$('.top-toolbar__button').forEach(btn => btn.classList.remove('is-active'));
             button.classList.add('is-active');
-            
             state.activeTool = tool;
             
-            updateAllEditorTools();
-
-            if (['pen', 'eraser'].includes(tool)) {
+            canvasEl.classList.remove('is-creative-tool-active', 'is-move-tool-active', 'is-select-tool-active', 'is-crop-tool-active', 'is-transform-tool-active');
+            
+            if (['pen', 'eraser', 'text'].includes(tool)) {
                 canvasEl.classList.add('is-creative-tool-active');
-            } else {
-                canvasEl.classList.remove('is-creative-tool-active');
+            } else if (['move', 'select', 'crop', 'transform'].includes(tool)) {
+                canvasEl.classList.add(`is-${tool}-tool-active`);
             }
         }
     });
 
-    colorPicker.addEventListener('input', () => {
-        updateAllEditorTools();
-    });
-
-    thicknessSlider.addEventListener('input', () => {
-        updateAllEditorTools();
-    });
-
+    colorPicker.addEventListener('input', updateAllEditorTools);
+    thicknessSlider.addEventListener('input', updateAllEditorTools);
     undoBtn.addEventListener('click', () => history.undo());
     redoBtn.addEventListener('click', () => history.redo());
 
@@ -777,12 +1039,16 @@ function init() {
     const initialPanY = (canvasEl.clientHeight / 2) - (WORLD.h * initialZoom / 2);
     setTransform({ panX: initialPanX, panY: initialPanY, zoom: initialZoom });
     bindEvents();
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
     initializeDraggableSidebar();
     initializeSidebarToggles();
     $$('.canvas-node').forEach(nodeEl => {
         if (nodeEl.dataset.nodeId.startsWith('image-editor-')) initializeImageEditorNode(nodeEl);
         else if (nodeEl.dataset.nodeId.startsWith('image-upload-')) initializeImageUploadNode(nodeEl);
     });
+    // Set initial tool class
+    $(`.top-toolbar__button[data-tool="${state.activeTool}"]`)?.click();
     console.log("Canvas ready.");
 }
 

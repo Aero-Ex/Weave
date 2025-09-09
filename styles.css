@@ -697,3 +697,83 @@ button, .btn-icon, .modern-sidebar__button {
     pointer-events: none;
     display: none;
 }
+/* =========================================================
+  Tool-specific Cursors
+  ========================================================= */
+
+/* Default cursor for the main canvas background */
+.canvas {
+  cursor: default;
+}
+.canvas.is-select-tool-active { 
+  cursor: crosshair; 
+}
+.canvas:not(.is-select-tool-active) {
+  cursor: grab;
+}
+.canvas:not(.is-select-tool-active):active {
+  cursor: grabbing;
+}
+.canvas[data-locked="true"] { 
+  cursor: not-allowed; 
+}
+
+/* Cursors for when hovering over the editable area of a draw-to-edit node */
+.canvas.is-creative-tool-active .canvas-node__content--editor,
+.canvas.is-crop-tool-active .canvas-node__content--editor {
+    cursor: crosshair;
+}
+.canvas.is-transform-tool-active .canvas-node__content--editor {
+    cursor: n-resize;
+}
+.canvas.is-move-tool-active .canvas-node__content--editor {
+    cursor: grab;
+}
+.canvas.is-move-tool-active .canvas-node__content--editor:active {
+    cursor: grabbing;
+}
+/* Ensure default cursor for other node types regardless of tool */
+.canvas-node:not([data-node-id*="image-editor"]) .canvas-node__content {
+    cursor: auto !important;
+}
+.crop-confirm-button {
+    background-color: var(--success) !important;
+    color: white !important;
+}
+
+.crop-confirm-button:hover {
+    background-color: color-mix(in oklab, var(--success) 85%, black) !important;
+}
+
+.canvas-node__footer--editor {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.editor-prompt-input {
+    all: unset;
+    width: 100%;
+    background-color: var(--bg-elev-2);
+    border-radius: var(--radius-1);
+    padding: var(--space-2);
+    box-sizing: border-box;
+    color: var(--fg);
+    font-family: inherit;
+    font-size: var(--fs-100);
+    margin-right: var(--space-2);
+}
+
+.edit-mask-button, .crop-confirm-button {
+    background-color: var(--accent);
+    color: var(--fg);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-1);
+    font-size: var(--fs-100);
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background-color 0.2s ease;
+}
+
+.edit-mask-button:hover {
+    background-color: var(--accent-hover);
+}
