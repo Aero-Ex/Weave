@@ -1,0 +1,699 @@
+/* =========================================================
+  CSS Reset and Base
+  ========================================================= */
+:where(:not(iframe, canvas, img, svg, video):not(svg *, symbol *)) {
+  all: unset;
+  display: revert;
+}
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+html, body {
+  height: 100%;
+}
+
+/* Basic styles for the application */
+body {
+    margin: 0;
+    overflow: hidden;
+    font-family: Arial, sans-serif;
+}
+
+canvas {
+    display: block;
+}
+
+/* ---------------------------------------------------------
+  Design Tokens (CSS Custom Properties)
+  --------------------------------------------------------- */
+:root {
+  /* Colors */
+  --bg: #000000;
+  --bg-elev-1: #0f141a;
+  --bg-elev-2: #151b22;
+  --fg: #cbd5e1;
+  --muted: #94a3b8;
+  --accent: #4b5867;
+  --accent-hover: #5a67d8;
+  --danger: #ef4444;
+  --success: #10b981;
+  --dot: rgba(227, 233, 243, 0.34);
+  --dot-strong: rgba(227, 233, 243, 0.14);
+  --brush-color: rgba(23, 119, 233, 0.7); /* For the mask tool */
+
+  /* Elevation and borders */
+  --border-color: rgba(255, 255, 255, 0.08);
+  --shadow-1: 0 2px 10px rgba(0,0,0,.35);
+  --shadow-2: 0 8px 28px rgba(0,0,0,.45);
+
+  /* Typography */
+  --font-sans: Inter, ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  --fs-100: clamp(12px, 0.72rem + 0.2vw, 14px);
+  --fs-200: clamp(14px, 0.82rem + 0.25vw, 16px);
+
+  /* Spacing scale (4pt base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+
+  /* Radii */
+  --radius-1: 6px;
+  --radius-2: 8px;
+
+  /* Focus */
+  --focus-ring: 0 0 0 3px rgba(164, 168, 169, 0.45);
+
+  /* Canvas / grid */
+  --grid-size: 24px;
+  --world-w: 4000px;
+  --world-h: 3000px;
+
+  /* Transform state (updated by JS) */
+  --pan-x: 0px;
+  --pan-y: 0px;
+  --zoom: 1;
+}
+
+/* =========================================================
+  Base & Utility Styles
+  ========================================================= */
+body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-200);
+  line-height: 1.45;
+  color: var(--fg);
+  background-color: var(--bg);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+}
+textarea, input, [contenteditable="true"] {
+  user-select: auto;
+  -webkit-user-select: auto;
+  -moz-user-select: auto;
+}
+button, .btn-icon, .modern-sidebar__button {
+  all: unset;
+  cursor: pointer;
+  position: relative;
+  display: grid;
+  place-items: center;
+  -webkit-tap-highlight-color: transparent;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+
+/* =========================================================
+  Layout
+  ========================================================= */
+.app {
+  width: 100%;
+  height: 100dvh;
+  position: relative;
+}
+.canvas {
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(circle at 1px 1px, var(--dot) 1px, transparent 1px),
+    radial-gradient(circle at 1px 1px, var(--dot-strong) 1px, transparent 1px);
+  position: relative;
+  overflow: hidden;
+  cursor: grab; /* Default cursor */
+}
+.canvas__world {
+  position: absolute;
+  width: var(--world-w);
+  height: var(--world-h);
+  transform: translate(var(--pan-x), var(--pan-y)) scale(var(--zoom));
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.canvas__world.is-zooming {
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.canvas__glow {
+  pointer-events: none;
+}
+
+/* =========================================================
+  Canvas & UI Components
+  ========================================================= */
+.controls {
+  position: fixed;
+  left: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 5;
+}
+.controls__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.controls__spacer {
+  height: var(--space-3);
+}
+.btn-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-2);
+  background: var(--bg-elev-2);
+  color: var(--fg);
+  box-shadow: var(--shadow-1);
+  border: 1px solid var(--border-color);
+  transition: background-color .2s ease, transform .08s ease;
+}
+.btn-icon:hover { background: color-mix(in oklab, var(--bg-elev-2) 80%, black); }
+.btn-icon:active { transform: translateY(1px) scale(0.98); }
+.btn-icon:focus-visible { box-shadow: var(--focus-ring), var(--shadow-1); }
+.icon { width: 20px; height: 20px; }
+.label-tile {
+  display: grid; place-items: center;
+  width: 40px; height: 40px;
+  border-radius: var(--radius-2);
+  background: var(--bg-elev-2);
+  color: var(--muted);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-1);
+  font-size: var(--fs-100);
+}
+#lockToggle[data-locked="true"] {
+  color: var(--muted);
+  background: color-mix(in oklab, var(--bg-elev-2) 92%, black);
+}
+.minimap {
+  position: fixed; right: var(--space-3); bottom: var(--space-3);
+  width: clamp(180px, 26vw, 260px);
+  aspect-ratio: 22/14;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+  cursor: pointer;
+}
+.minimap canvas { display: block; width: 100%; height: 100%; }
+.minimap__frame {
+  position: absolute; inset: 0;
+  border: 3px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-2);
+  pointer-events: none;
+}
+.minimap__frame::after {
+  content: ""; position: absolute;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  border-radius: calc(var(--radius-1) - 1px);
+  inset: var(--v-top, 30%) var(--v-right, 30%) var(--v-bottom, 30%) var(--v-left, 30%);
+}
+.connections-layer {
+  position: absolute; inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+.canvas[data-locked="true"] { cursor: not-allowed; }
+.canvas:not([data-locked="true"]):active { cursor: grabbing; }
+
+/* =========================================================
+  Top Toolbar
+  ========================================================= */
+.top-toolbar {
+    position: fixed;
+    top: var(--space-3);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    background-color: var(--bg-elev-1);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-2);
+    padding: var(--space-1);
+    box-shadow: var(--shadow-2);
+}
+.top-toolbar__group {
+    display: flex;
+    gap: 2px;
+}
+.top-toolbar__button {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-1);
+    color: var(--muted);
+    transition: background-color 0.2s ease, color 0.2s ease;
+    will-change: background-color, color;
+}
+.top-toolbar__button:disabled {
+    color: var(--accent);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+.top-toolbar__button svg {
+    width: 20px;
+    height: 20px;
+}
+.top-toolbar__button:not(:disabled):hover {
+    background-color: var(--bg-elev-2);
+    color: var(--fg);
+}
+.top-toolbar__button.is-active {
+    background-color: var(--accent);
+    color: var(--fg);
+}
+.top-toolbar__spacer {
+    width: 1px;
+    height: 24px;
+    background-color: var(--border-color);
+}
+.top-toolbar__button[data-tooltip]::after,
+.tool-setting[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: calc(100% + 8px);
+    background: var(--bg-elev-2);
+    color: var(--fg);
+    padding: 4px 8px;
+    border-radius: var(--radius-1);
+    font-size: var(--fs-100);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 100;
+}
+.top-toolbar__button[data-tooltip]:hover::after,
+.tool-setting[data-tooltip]:hover::after {
+    opacity: 1;
+}
+
+/* =========================================================
+  Top Toolbar Settings
+  ========================================================= */
+.top-toolbar__group--settings {
+    align-items: center;
+    gap: var(--space-3);
+    padding: 0 var(--space-2);
+}
+.tool-setting {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+.tool-setting__color-input {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 2px solid var(--bg-elev-2);
+    border-radius: 50%;
+    cursor: pointer;
+    background-color: transparent;
+}
+.tool-setting__color-input::-webkit-color-swatch {
+    border-radius: 50%;
+    border: none;
+}
+.tool-setting__color-input::-moz-color-swatch {
+    border-radius: 50%;
+    border: none;
+}
+.tool-setting__slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100px;
+    height: 4px;
+    background: var(--bg-elev-2);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+.tool-setting__slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--fg);
+    border-radius: 50%;
+}
+.tool-setting__slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: var(--fg);
+    border-radius: 50%;
+    border: none;
+}
+
+/* =========================================================
+  Sidebar
+  ========================================================= */
+.modern-sidebar {
+    position: fixed; top: 50%; left: var(--space-3);
+    transform: translateY(-50%);
+    z-index: 10;
+    display: flex; flex-direction: column; gap: var(--space-2);
+    background-color: var(--bg-elev-1);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-2);
+    padding: var(--space-2);
+    box-shadow: var(--shadow-2);
+    cursor: grab;
+}
+.modern-sidebar.is-dragging {
+    cursor: grabbing;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.modern-sidebar__list { display: flex; flex-direction: column; gap: 0.5rem; }
+.modern-sidebar__spacer { flex-grow: 1; }
+.modern-sidebar__button {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    color: var(--muted);
+    transition: background-color 0.2s ease, color 0.2s ease;
+    will-change: background-color, color;
+}
+.modern-sidebar__button svg { width: 24px; height: 24px; }
+.modern-sidebar__button--profile img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+.modern-sidebar__button:hover { background-color: var(--bg-elev-2); color: var(--fg); }
+.modern-sidebar__button.is-active { background-color: var(--accent); color: var(--fg); }
+.modern-sidebar__button[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute; left: calc(100% + 12px); top: 50%;
+    transform: translateY(-50%);
+    background: var(--bg-elev-2); color: var(--fg);
+    padding: 4px 8px; border-radius: var(--radius-1);
+    font-size: var(--fs-100); white-space: nowrap;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+.modern-sidebar__button[data-tooltip]:hover::after { opacity: 1; }
+
+/* =========================================================
+  Nodes & Node Content
+  ========================================================= */
+.canvas-node {
+    position: absolute; width: auto;
+    min-width: 220px;
+    min-height: 100px;
+    background-color: var(--bg-elev-1);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-2);
+    box-shadow: var(--shadow-2);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    font-size: var(--fs-100); color: var(--muted);
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    will-change: box-shadow, border-color;
+    contain: content;
+}
+.canvas-node:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-hover), var(--shadow-2);
+    border-color: var(--accent-hover);
+}
+.canvas-node.is-resizing {
+    box-shadow: 0 0 0 4px var(--accent-hover), var(--shadow-2);
+    border-color: var(--accent-hover);
+}
+.canvas-node__resizer {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 16px;
+    height: 16px;
+    cursor: se-resize;
+    z-index: 10;
+    background-image: linear-gradient(135deg, 
+        transparent 30%, 
+        var(--muted) 30%, 
+        var(--muted) 50%, 
+        transparent 50%, 
+        transparent 70%, 
+        var(--muted) 70%, 
+        var(--muted) 90%, 
+        transparent 90%);
+    opacity: 0.5;
+    transition: opacity 0.2s ease;
+    will-change: opacity;
+}
+.canvas-node:hover .canvas-node__resizer {
+    opacity: 1;
+}
+.canvas-node.is-dragging { 
+    box-shadow: 0 0 0 4px var(--accent), var(--shadow-2);
+    border-color: var(--accent);
+}
+.canvas-node__header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border-color);
+    color: var(--fg); cursor: grab;
+}
+.canvas-node__header:active { cursor: grabbing; }
+.model-tag {
+    background-color: var(--bg-elev-2);
+    padding: 2px 6px; border-radius: 4px;
+    font-size: 11px; color: var(--muted);
+}
+.canvas-node__content { 
+  padding: var(--space-3); 
+  line-height: 1.5;
+  flex-grow: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-node__footer { padding: var(--space-3); text-align: right; border-top: 1px solid var(--border-color);}
+.prompt-textarea {
+    all: unset;
+    display: block;
+    width: 100%;
+    background-color: var(--bg-elev-2);
+    border-radius: var(--radius-1);
+    padding: var(--space-2);
+    box-sizing: border-box;
+    color: var(--fg);
+    font-family: inherit;
+    font-size: var(--fs-100);
+    resize: none;
+    overflow: auto;
+    flex-grow: 1;
+}
+.generate-button {
+    background-color: var(--accent); color: var(--fg);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-1);
+    font-size: var(--fs-100); font-weight: 500;
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    transition: background-color 0.2s ease;
+    will-change: background-color;
+}
+.generate-button:hover { background-color: var(--accent-hover); }
+.generate-button .icon { width: 16px; height: 16px; }
+.canvas-node__content--output { display: grid; place-items: center; min-height: 120px; }
+.loader {
+    width: 24px; height: 24px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* =========================================================
+  Draw-to-Edit Node Styles
+  ========================================================= */
+.canvas-node__content--editor {
+    position: relative;
+    padding: 0;
+    background-color: var(--bg);
+}
+.editor-canvas-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* Allow clicks to pass through to empty state when visible */
+}
+.image-editor-canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+.editor-empty-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    background-color: var(--color-bg-secondary);
+    border-radius: inherit;
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+    pointer-events: auto; /* Make sure it can be clicked */
+    z-index: 1; /* Ensure it's on top */
+    opacity: 1;
+    transition: opacity 150ms ease-in-out, background-color 150ms ease-in-out;
+}
+.editor-empty-state svg {
+    width: 40px;
+    height: 40px;
+}
+.editor-empty-state > input[type="file"] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    z-index: 2; /* Above the text/icon, but below other UI */
+}
+.canvas-node__content--editor:hover .editor-empty-state {
+    background-color: var(--color-bg-tertiary);
+}
+.editor-canvas-container .canvas-container,
+.editor-canvas-container .canvas-container canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* =========================================================
+  Context Menu & Upload Node Styles
+  ========================================================= */
+.add-node-menu {
+    position: fixed;
+    z-index: 20;
+    width: 200px;
+    background-color: var(--bg-elev-1);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-2);
+    box-shadow: var(--shadow-2);
+    padding: var(--space-2);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.add-node-menu__header {
+    font-size: var(--fs-100);
+    color: var(--muted);
+    padding: 4px 6px;
+}
+.add-node-menu button {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem;
+    border-radius: var(--radius-1);
+    transition: background-color 0.15s ease;
+    text-align: left;
+}
+.add-node-menu button:hover,
+.add-node-menu button:focus-visible {
+    background-color: var(--bg-elev-2);
+}
+.add-node-menu button svg {
+    width: 20px;
+    height: 20px;
+    color: var(--muted);
+    flex-shrink: 0;
+}
+.add-node-menu button span {
+    flex-grow: 1;
+    color: var(--fg);
+    font-size: var(--fs-100);
+}
+.add-node-menu button kbd {
+    font-family: inherit;
+    font-size: 11px;
+    background-color: var(--bg-elev-2);
+    border: 1px solid var(--border-color);
+    padding: 2px 5px;
+    border-radius: 4px;
+    color: var(--muted);
+}
+.canvas-node__content--image-upload {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background-color: var(--bg);
+    overflow: hidden;
+}
+
+.image-upload-empty-state {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    color: var(--muted);
+    border: 2px dashed var(--bg-elev-2);
+    border-radius: var(--radius-2);
+    margin: var(--space-2);
+    cursor: pointer;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.image-upload-empty-state:hover {
+    background-color: var(--bg-elev-2);
+}
+
+.image-upload-empty-state.drag-over {
+    border-color: var(--accent-hover);
+    background-color: color-mix(in oklab, var(--bg-elev-2) 80%, black);
+}
+
+.image-upload-empty-state svg {
+    width: 40px;
+    height: 40px;
+}
+
+.canvas-node__content--image-upload img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+/* =========================================================
+  Selection & Highlighting Styles
+  ========================================================= */
+.canvas-node[aria-selected="true"] {
+    box-shadow: 0 0 0 3px var(--accent-hover), var(--shadow-2);
+    border-color: var (--accent-hover);
+}
+.selection-box {
+    position: absolute;
+    z-index: 15;
+    background-color: rgba(90, 103, 216, 0.2);
+    border: 1px solid var(--accent-hover);
+    pointer-events: none;
+    display: none;
+}

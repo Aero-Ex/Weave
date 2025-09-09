@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="Node-based canvas with dotted grid, zoom controls, and minimap." />
+    <title>Canvas — Dotted Grid with Minimap</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js" defer></script>
+  </head>
+  <body>
+
+    <main class="app" id="app" role="main">
+
+        <!-- Top Toolbar (controls global tool state) -->
+        <nav class="top-toolbar" aria-label="Main Tools">
+            <div class="top-toolbar__group">
+                <button class="top-toolbar__button is-active" data-tool="move" data-tooltip="Move (V)">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" /></svg>
+                </button>
+                <button class="top-toolbar__button" data-tool="select" data-tooltip="Select (M)">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2 3" d="M7.5 3.75H6A2.25 2.25 0 0 0 3.75 6v1.5M16.5 3.75H18A2.25 2.25 0 0 1 20.25 6v1.5m0 9V18A2.25 2.25 0 0 1 18 20.25h-1.5m-9 0H6A2.25 2.25 0 0 1 3.75 18v-1.5" /></svg>
+                </button>
+                 <button class="top-toolbar__button" data-tool="crop" data-tooltip="Crop (C)">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 3.75H4.5A2.25 2.25 0 0 0 2.25 6v13.5M7.5 20.25H19.5A2.25 2.25 0 0 0 21.75 18V9.75" /></svg>
+                </button>
+                <button class="top-toolbar__button" data-tool="transform" data-tooltip="Transform (T)">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v.008h.008V3.75H3.75Zm0 16.5v.008h.008v-.008H3.75Zm16.5 0v.008h.008v-.008h-.008Zm0-16.5v.008h.008V3.75h-.008ZM8.25 3.75h7.5v.008h-7.5V3.75Zm0 16.5h7.5v.008h-7.5v-.008ZM3.75 8.25v7.5h.008v-7.5H3.75Zm16.5 0v7.5h.008v-7.5h-.008Z" /></svg>
+                </button>
+            </div>
+            <!-- History Tools -->
+            <div class="top-toolbar__group">
+                <button id="undo-btn" class="top-toolbar__button" data-tooltip="Undo (Ctrl+Z)" disabled>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg>
+                </button>
+                <button id="redo-btn" class="top-toolbar__button" data-tooltip="Redo (Ctrl+Y)" disabled>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m15 15 6-6m0 0-6-6m6 6H9a6 6 0 0 0 0 12h3" /></svg>
+                </button>
+            </div>
+            <div class="top-toolbar__spacer"></div>
+            <!-- Creative Tools -->
+            <div class="top-toolbar__group">
+                <button class="top-toolbar__button" data-tool="pen" data-tooltip="Pen (P)">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" /></svg>
+                </button>
+                 <button class="top-toolbar__button" data-tool="text" data-tooltip="Text">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 3v18M3 3h9m4.5 0v18h-9M12 3h9" /></svg>
+                </button>
+                <button class="top-toolbar__button" data-tool="eraser" data-tooltip="Eraser (E)">
+                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 7.5V6.108c0-1.135.845-2.098 1.976-2.192.343-.026.69.02.993.123s.584.27.81.498l.006.005a2.25 2.25 0 0 1 .708 1.586v1.308m-3.834 5.378.017.009.009.004 3.806 1.903a1.125 1.125 0 0 0 1.28-1.282l-1.903-3.806a1.125 1.125 0 0 0-1.282-1.28l-3.806-1.904a1.125 1.125 0 0 0-1.28 1.281l1.904 3.806Zm-1.636 4.145-1.54 1.54a1.125 1.125 0 0 1-1.591 0l-1.54-1.54a1.125 1.125 0 0 1 0-1.591l1.54-1.54a1.125 1.125 0 0 1 1.59 0l1.54 1.54a1.125 1.125 0 0 1 0 1.591Zm7.5-7.5" /></svg>
+                </button>
+                 <button class="top-toolbar__button" data-tool="mask" data-tooltip="Mask">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15.362 5.214A8.252 8.252 0 0 1 12 21 8.25 8.25 0 0 1 6.038 7.047 8.287 8.287 0 0 0 9 9.601a8.287 8.287 0 0 0 3-7.284 8.252 8.252 0 0 1 3.362 2.897Z" /></svg>
+                </button>
+            </div>
+            <!-- Tool Settings -->
+            <div class="top-toolbar__group top-toolbar__group--settings">
+                <div class="tool-setting" data-tooltip="Brush Color">
+                    <input type="color" id="color-picker" class="tool-setting__color-input" value="#5a67d8">
+                </div>
+                <div class="tool-setting" data-tooltip="Brush Size">
+                    <input type="range" id="thickness-slider" min="1" max="50" value="25" class="tool-setting__slider">
+                </div>
+            </div>
+        </nav>
+        
+        <nav class="modern-sidebar" aria-label="Creative Tools">
+            <ul class="modern-sidebar__list">
+                <li><button class="modern-sidebar__button is-active" data-tooltip="Add Block"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button></li>
+                <li><button class="modern-sidebar__button" data-tooltip="My Files"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776" /></svg></button></li>
+                <li><button class="modern-sidebar__button" data-tooltip="History"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg></button></li>
+            </ul>
+            <div class="modern-sidebar__spacer"></div>
+            <ul class="modern-sidebar__list">
+                <li><button class="modern-sidebar__button modern-sidebar__button--profile" data-tooltip="My Account"><img src="https://i.pravatar.cc/32" alt="User Avatar"></button></li>
+            </ul>
+        </nav>
+        
+      <section class="canvas" aria-label="Canvas workspace" data-locked="false">
+        <div class="canvas__world" id="world" role="presentation" aria-hidden="true">
+          
+          <svg id="connections-svg" class="connections-layer" viewBox="0 0 4000 3000"></svg>
+          
+          <div class="canvas-node" style="left: 1700px; top: 1400px; width: 400px; height: 500px" data-node-id="text-1" tabindex="0" aria-selected="false">
+              <header class="canvas-node__header"><span>Text Prompt</span><span class="model-tag">User Input</span></header>
+              <div class="canvas-node__content"><textarea id="prompt-input" class="prompt-textarea" placeholder="A futuristic cityscape at sunset...">A futuristic cityscape at sunset, neon lights, flying cars</textarea></div>
+              <div class="canvas-node__resizer"></div>
+          </div>
+
+          <div class="canvas-node" style="left: 2100px; top: 1400px; width: 400px; height: 500px" data-node-id="image-1" tabindex="0" aria-selected="false">
+              <header class="canvas-node__header"><span>Image</span><span class="model-tag">Flux Dev</span></header>
+              <div id="image-output" class="canvas-node__content canvas-node__content--output"><p class="placeholder-text">Image will be generated here</p></div>
+               <div class="canvas-node__footer"><button id="generate-btn" class="generate-button" data-model="flux-1.1-pro" data-target-node="image-1">Generate</button></div>
+                <div class="canvas-node__resizer"></div>
+          </div>
+          
+          <!-- Draw-to-Edit Node -->
+          <div class="canvas-node" style="left: 2400px; top: 1400px; width: 400px; height: 500px" data-node-id="image-editor-1" tabindex="0" aria-selected="false">
+            <header class="canvas-node__header">
+                <span>Draw to Edit</span>
+                <span class="model-tag">Nano Banana</span>
+            </header>
+            <div class="canvas-node__content canvas-node__content--editor">
+                <div class="editor-canvas-container">
+                    <canvas class="image-editor-canvas"></canvas>
+                </div>
+                <div class="editor-empty-state">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
+                    <span>Drop image to start editing</span>
+                    <input type="file" accept="image/*" style="display: none;" />
+                </div>
+            </div>
+            <div class="canvas-node__footer canvas-node__footer--editor">
+              <input type="text" class="editor-prompt-input" placeholder="Describe how to change the selected area...">
+              <button class="edit-mask-button">Edit Mask</button>
+            </div>
+            <div class="canvas-node__resizer"></div>
+          </div>
+
+          <div class="selection-box" id="selectionBox"></div>
+        </div>
+        <div class="canvas__glow" aria-hidden="true"></div>
+      </section>
+
+      <nav class="controls" id="controls" aria-label="Canvas controls">
+        <ul class="controls__list" role="list">
+          <li><button class="btn-icon" id="zoomIn" type="button" aria-label="Zoom in" data-tooltip="Zoom in (+)"><svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg></button></li>
+          <li><button class="btn-icon" id="zoomOut" type="button" aria-label="Zoom out" data-tooltip="Zoom out (−)"><svg class="icon" viewBox="0 0 24 24"><path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg></button></li>
+          <li><output id="zoomLabel" class="label-tile" aria-live="polite" title="Current zoom">100%</output></li>
+          <li aria-hidden="true" class="controls__spacer" role="separator"></li>
+          <li><button class="btn-icon" id="lockToggle" type="button" aria-pressed="false" aria-label="Lock canvas" data-tooltip="Lock canvas (disable pan/zoom)" data-locked="false"><svg class="icon" viewBox="0 0 24 24"><path d="M17 11h-1V8a4 4 0 0 0-8 0v3H7a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1Zm-7-3a3 3 0 1 1 6 0v3H10V8Z" fill="currentColor" /></svg></button></li>
+        </ul>
+      </nav>
+
+      <aside class="minimap" aria-label="Minimap preview"><canvas id="minimap" width="220" height="140"></canvas><div class="minimap__frame" id="minimapFrame"></div></aside>
+      
+      <!-- Accessibility Live Region -->
+      <div class="sr-only" id="aria-live-region" aria-live="polite"></div>
+    </main>
+
+    <!-- Node Templates -->
+    <template id="node-template-text">
+        <header class="canvas-node__header"><span>Text Prompt</span><span class="model-tag">User Input</span></header>
+        <div class="canvas-node__content"><textarea class="prompt-textarea" placeholder="Describe what you want to create..."></textarea></div>
+        <div class="canvas-node__resizer"></div>
+    </template>
+    <template id="node-template-image-upload">
+        <header class="canvas-node__header"><span>Image Upload</span><span class="model-tag">Local File</span></header>
+        <div class="canvas-node__content canvas-node__content--image-upload">
+            <div class="image-upload-empty-state">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
+                <span>Upload or drop image</span>
+            </div>
+            <input type="file" accept="image/*" style="display: none;" />
+        </div>
+        <div class="canvas-node__resizer"></div>
+    </template>
+    <template id="node-template-image-editor">
+        <header class="canvas-node__header"><span>Draw to Edit</span><span class="model-tag">Nano Banana</span></header>
+        <div class="canvas-node__content canvas-node__content--editor">
+            <div class="editor-canvas-container"><canvas class="image-editor-canvas"></canvas></div>
+            <div class="editor-empty-state">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
+                <span>Drop image to start</span>
+                <input type="file" accept="image/*" style="display: none;" />
+            </div>
+        </div>
+        <div class="canvas-node__footer canvas-node__footer--editor">
+            <input type="text" class="editor-prompt-input" placeholder="Describe the edit...">
+            <button class="edit-mask-button">Edit</button>
+        </div>
+        <div class="canvas-node__resizer"></div>
+    </template>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
