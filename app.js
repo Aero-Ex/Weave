@@ -587,7 +587,15 @@ function initializeImageEditorNode(nodeEl) {
     const fileInput = nodeEl.querySelector('input[type="file"]');
     const cropConfirmBtn = nodeEl.querySelector('.crop-confirm-button');
 
-    if (!canvas || !canvasContainer || !emptyState || !fileInput) return;
+    if (!canvas || !canvasContainer || !emptyState || !fileInput) {
+        console.error('Missing required elements for image editor node:', {
+            canvas: !!canvas,
+            canvasContainer: !!canvasContainer,
+            emptyState: !!emptyState,
+            fileInput: !!fileInput
+        });
+        return;
+    }
 
     const ctx = canvas.getContext('2d');
     const ed = {
@@ -665,9 +673,8 @@ function initializeImageEditorNode(nodeEl) {
                 ed.isCroppingActive = true;
                 updateCropHandles(ed);
                 redrawEditor(ed);
-                ed.nodeEl.querySelector('.crop-confirm-button').style.display = 'block';
-                ed.nodeEl.querySelector('.edit-mask-button').style.display = 'none';
             } else {
+                ed.isCroppingActive = false;
                 redrawEditor(ed); // Redraw to remove the tiny box
             }
         }
@@ -694,7 +701,11 @@ function initializeImageEditorNode(nodeEl) {
     };
 
     const onEditorPointerDown = (e) => {
-        e.stopPropagation(); 
+        // Don't handle pointer events on empty state at all
+        if (e.target.closest('.editor-empty-state')) {
+            return;
+        }
+        e.stopPropagation();
         state.activeEditorNode = ed;
         
         if (state.activeTool === 'crop') {
@@ -746,27 +757,63 @@ function initializeImageEditorNode(nodeEl) {
 
     const contentArea = nodeEl.querySelector('.canvas-node__content--editor');
     contentArea.addEventListener('pointerdown', onEditorPointerDown);
-    cropConfirmBtn.addEventListener('click', () => endCrop(ed, true));
+    if (cropConfirmBtn) {
+        cropConfirmBtn.addEventListener('click', () => endCrop(ed, true));
+    }
 
     const loadAndDisplayImage = file => {
-        if (!file?.type.startsWith('image/')) return;
+        console.log('loadAndDisplayImage called with:', file);
+        if (!file?.type.startsWith('image/')) {
+            console.error('Invalid file type:', file?.type);
+            return;
+        }
         const reader = new FileReader();
         reader.onload = e => {
+            console.log('File loaded, hiding empty state and creating image');
             emptyState.style.display = 'none';
             const img = new Image();
-            img.onload = () => { ed.bgImage = img; redrawEditor(ed); };
+            img.onload = () => { 
+                console.log('Image loaded successfully, setting bg image and redrawing');
+                ed.bgImage = img; 
+                redrawEditor(ed); 
+            };
+            img.onerror = () => {
+                console.error('Failed to load image');
+            };
             img.src = e.target.result;
+        };
+        reader.onerror = () => {
+            console.error('Failed to read file');
         };
         reader.readAsDataURL(file);
     };
 
-    emptyState.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', e => e.target.files?.length && loadAndDisplayImage(e.target.files[0]));
-    nodeEl.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); emptyState?.classList.add('drag-over'); });
-    nodeEl.addEventListener('dragleave', e => { e.preventDefault(); e.stopPropagation(); emptyState?.classList.remove('drag-over'); });
+    emptyState.addEventListener('click', (e) => {
+        e.stopPropagation(); // Prevent further event handling
+        fileInput.click();
+    });
+    fileInput.addEventListener('change', e => {
+        if (e.target.files?.length) {
+            loadAndDisplayImage(e.target.files[0]);
+        }
+    });
+    nodeEl.addEventListener('dragover', e => { 
+        e.preventDefault(); 
+        e.stopPropagation(); 
+        emptyState?.classList.add('drag-over'); 
+    });
+    nodeEl.addEventListener('dragleave', e => { 
+        e.preventDefault(); 
+        e.stopPropagation(); 
+        emptyState?.classList.remove('drag-over'); 
+    });
     nodeEl.addEventListener('drop', e => {
-        e.preventDefault(); e.stopPropagation(); emptyState?.classList.remove('drag-over');
-        if (e.dataTransfer?.files.length) loadAndDisplayImage(e.dataTransfer.files[0]);
+        e.preventDefault(); 
+        e.stopPropagation(); 
+        emptyState?.classList.remove('drag-over');
+        if (e.dataTransfer?.files.length) {
+            loadAndDisplayImage(e.dataTransfer.files[0]);
+        }
     });
 }
 
@@ -785,34 +832,53 @@ function updateCropHandles(ed) {
 }
 
 function endCrop(ed, apply) {
-    if (!ed.isCroppingActive) {
-        ed.isDefiningCropArea = false; // Ensure defining is also stopped
-        return;
-    }
+    if (!ed.isCroppingActive && !ed.isDefiningCropArea) return;
 
     if (apply) {
         const { x, y, w, h } = ed.cropBox;
-        if (w > 1 && h > 1) {
+        if (w > 1 && h > 1 && ed.bgImage) {
             const before = ed.bgImage.src;
             const beforeMeta = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale };
 
             const imgRect = getDrawnImageRect(ed);
-            
-            const sourceX = ((x - imgRect.x) / imgRect.w) * ed.bgImage.width;
-            const sourceY = ((y - imgRect.y) / imgRect.h) * ed.bgImage.height;
-            const sourceW = (w / imgRect.w) * ed.bgImage.width;
-            const sourceH = (h / imgRect.h) * ed.bgImage.height;
 
-            const finalCanvas = document.createElement('canvas');
-            finalCanvas.width = sourceW;
-            finalCanvas.height = sourceH;
-            finalCanvas.getContext('2d').drawImage(ed.bgImage, sourceX, sourceY, sourceW, sourceH, 0, 0, sourceW, sourceH);
+// Ensure we have valid image dimensions
+if (imgRect.w <= 0 || imgRect.h <= 0) {
+    console.error('Invalid image dimensions for cropping');
+    ed.isCroppingActive = false;
+    ed.isDefiningCropArea = false;
+    redrawEditor(ed);
+    return;
+}
+
+// Calculate crop area relative to the drawn image in original image pixels
+const sourceX = ((x - imgRect.x) / imgRect.w) * ed.bgImage.width;
+const sourceY = ((y - imgRect.y) / imgRect.h) * ed.bgImage.height;
+const sourceW = (w / imgRect.w) * ed.bgImage.width;
+const sourceH = (h / imgRect.h) * ed.bgImage.height;
+
+const finalCanvas = document.createElement('canvas');
+finalCanvas.width = Math.max(1, sourceW);
+finalCanvas.height = Math.max(1, sourceH);
+finalCanvas.getContext('2d').drawImage(
+    ed.bgImage,
+    sourceX,
+    sourceY,
+    sourceW,
+    sourceH,
+    0,
+    0,
+    finalCanvas.width,
+    finalCanvas.height
+);
             
             const newImage = new Image();
             newImage.onload = () => {
                 ed.bgImage = newImage;
                 ed.bgImagePos = { x: 0, y: 0 };
                 ed.bgImageScale = 1;
+                redrawEditor(ed); // Redraw with new cropped image
+                
                 const after = newImage.src;
                 const afterMeta = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale };
                 history.add({ type: 'editor:modify', nodeId: ed.nodeId, before, after, metadata: afterMeta, beforeMetadata: beforeMeta });
@@ -823,8 +889,10 @@ function endCrop(ed, apply) {
     
     ed.isCroppingActive = false;
     ed.isDefiningCropArea = false;
-    ed.nodeEl.querySelector('.crop-confirm-button').style.display = 'none';
-    ed.nodeEl.querySelector('.edit-mask-button').style.display = 'block';
+    ed.activeHandle = null;
+    ed.isMovingCropBox = false;
+    ed.canvas.style.cursor = 'crosshair';
+
     redrawEditor(ed);
 }
 
@@ -840,6 +908,7 @@ function handleCropPointerDown(e, ed) {
             ed.cropStartBox = { ...ed.cropBox };
         } else if (pos.x > ed.cropBox.x && pos.x < ed.cropBox.x + ed.cropBox.w && pos.y > ed.cropBox.y && pos.y < ed.cropBox.y + ed.cropBox.h) {
             ed.isMovingCropBox = true;
+            ed.cropStartBox = { ...ed.cropBox };
         } else {
              endCrop(ed, false);
              return;
@@ -854,44 +923,67 @@ function handleCropPointerDown(e, ed) {
 
 function handleCropPointerMove(e, ed) {
     const pos = getRelativePointerPos(e, ed.canvas);
-    
-    if (ed.isDefiningCropArea) {
-        ed.cropBox.w = pos.x - ed.opStart.x;
-        ed.cropBox.h = pos.y - ed.opStart.y;
-        redrawEditor(ed);
-        return;
-    }
-
     const dx = pos.x - ed.opStart.x;
     const dy = pos.y - ed.opStart.y;
 
-    if (ed.activeHandle) {
+    if (ed.isDefiningCropArea) {
+        ed.cropBox.w = dx;
+        ed.cropBox.h = dy;
+        redrawEditor(ed);
+    } else if (ed.activeHandle) {
         const { name } = ed.activeHandle;
         const start = ed.cropStartBox;
         
+        // Apply handle movement
         if (name.includes('l')) { ed.cropBox.x = start.x + dx; ed.cropBox.w = start.w - dx; }
         if (name.includes('r')) { ed.cropBox.w = start.w + dx; }
         if (name.includes('t')) { ed.cropBox.y = start.y + dy; ed.cropBox.h = start.h - dy; }
         if (name.includes('b')) { ed.cropBox.h = start.h + dy; }
 
+        // Apply aspect ratio constraint for corner handles when Shift is held
         if (e.shiftKey && (name === 'tl' || name === 'tr' || name === 'bl' || name === 'br')) {
-            const aspect = start.w / start.h;
-            if (name.includes('l') || name.includes('r')) ed.cropBox.h = ed.cropBox.w / aspect;
-            else ed.cropBox.w = ed.cropBox.h * aspect;
+            if (Math.abs(start.w) > 0 && Math.abs(start.h) > 0) {
+                const aspect = Math.abs(start.w / start.h);
+                
+                // Determine which dimension changed more
+                const wChange = Math.abs(ed.cropBox.w) - Math.abs(start.w);
+                const hChange = Math.abs(ed.cropBox.h) - Math.abs(start.h);
+                
+                if (Math.abs(wChange) > Math.abs(hChange)) {
+                    // Width changed more, adjust height
+                    ed.cropBox.h = Math.abs(ed.cropBox.w) / aspect;
+                    if (start.h < 0) ed.cropBox.h = -ed.cropBox.h;
+                } else {
+                    // Height changed more, adjust width
+                    ed.cropBox.w = Math.abs(ed.cropBox.h) * aspect;
+                    if (start.w < 0) ed.cropBox.w = -ed.cropBox.w;
+                }
+                
+                // Adjust position for left/top handles
+                if (name.includes('l')) ed.cropBox.x = start.x + start.w - ed.cropBox.w;
+                if (name.includes('t')) ed.cropBox.y = start.y + start.h - ed.cropBox.h;
+            }
         }
 
-    } else if (ed.isMovingCropBox) {
-        ed.cropBox.x += dx;
-        ed.cropBox.y += dy;
-        ed.opStart = pos; 
-    } else {
-        const handle = ed.handles.find(h => Math.abs(pos.x - h.x) < 8 && Math.abs(pos.y - h.y) < 8);
-        ed.canvas.style.cursor = handle ? handle.cursor : (ed.isCroppingActive ? 'move' : 'crosshair');
-    }
-
-    if(ed.isCroppingActive) {
         updateCropHandles(ed);
         redrawEditor(ed);
+    } else if (ed.isMovingCropBox) {
+        const start = ed.cropStartBox;
+        ed.cropBox.x = start.x + dx;
+        ed.cropBox.y = start.y + dy;
+        updateCropHandles(ed);
+        redrawEditor(ed);
+    } else {
+        // Update cursor based on hover
+        const handle = ed.handles.find(h => Math.abs(pos.x - h.x) < 8 && Math.abs(pos.y - h.y) < 8);
+        if (handle) {
+            ed.canvas.style.cursor = handle.cursor;
+        } else if (pos.x > ed.cropBox.x && pos.x < ed.cropBox.x + ed.cropBox.w && 
+                   pos.y > ed.cropBox.y && pos.y < ed.cropBox.y + ed.cropBox.h) {
+            ed.canvas.style.cursor = 'move';
+        } else {
+            ed.canvas.style.cursor = 'crosshair';
+        }
     }
 }
 
@@ -959,7 +1051,7 @@ function onMinimapClick(e) {
 function handleKeyboard(e) {
     if (['textarea', 'input'].includes(e.target.tagName.toLowerCase())) return;
 
-    if (state.activeEditorNode && state.activeEditorNode.isCroppingActive) {
+    if (state.activeEditorNode && (state.activeEditorNode.isCroppingActive || state.activeEditorNode.isDefiningCropArea)) {
         if (e.key === 'Enter') {
             e.preventDefault();
             endCrop(state.activeEditorNode, true);
@@ -1016,7 +1108,7 @@ function bindEvents() {
             
             canvasEl.classList.remove('is-creative-tool-active', 'is-move-tool-active', 'is-select-tool-active', 'is-crop-tool-active', 'is-transform-tool-active');
             
-            if (['pen', 'eraser', 'text'].includes(tool)) {
+            if (['pen', 'eraser', 'text', 'mask'].includes(tool)) {
                 canvasEl.classList.add('is-creative-tool-active');
             } else if (['move', 'select', 'crop', 'transform'].includes(tool)) {
                 canvasEl.classList.add(`is-${tool}-tool-active`);
