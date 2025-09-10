@@ -587,15 +587,7 @@ function initializeImageEditorNode(nodeEl) {
     const fileInput = nodeEl.querySelector('input[type="file"]');
     const cropConfirmBtn = nodeEl.querySelector('.crop-confirm-button');
 
-    if (!canvas || !canvasContainer || !emptyState || !fileInput) {
-        console.error('Missing required elements for image editor node:', {
-            canvas: !!canvas,
-            canvasContainer: !!canvasContainer,
-            emptyState: !!emptyState,
-            fileInput: !!fileInput
-        });
-        return;
-    }
+    if (!canvas || !canvasContainer || !emptyState || !fileInput) return;
 
     const ctx = canvas.getContext('2d');
     const ed = {
@@ -701,11 +693,7 @@ function initializeImageEditorNode(nodeEl) {
     };
 
     const onEditorPointerDown = (e) => {
-        // Don't handle pointer events on empty state at all
-        if (e.target.closest('.editor-empty-state')) {
-            return;
-        }
-        e.stopPropagation();
+        e.stopPropagation(); 
         state.activeEditorNode = ed;
         
         if (state.activeTool === 'crop') {
@@ -757,63 +745,27 @@ function initializeImageEditorNode(nodeEl) {
 
     const contentArea = nodeEl.querySelector('.canvas-node__content--editor');
     contentArea.addEventListener('pointerdown', onEditorPointerDown);
-    if (cropConfirmBtn) {
-        cropConfirmBtn.addEventListener('click', () => endCrop(ed, true));
-    }
+    cropConfirmBtn.addEventListener('click', () => endCrop(ed, true));
 
     const loadAndDisplayImage = file => {
-        console.log('loadAndDisplayImage called with:', file);
-        if (!file?.type.startsWith('image/')) {
-            console.error('Invalid file type:', file?.type);
-            return;
-        }
+        if (!file?.type.startsWith('image/')) return;
         const reader = new FileReader();
         reader.onload = e => {
-            console.log('File loaded, hiding empty state and creating image');
             emptyState.style.display = 'none';
             const img = new Image();
-            img.onload = () => { 
-                console.log('Image loaded successfully, setting bg image and redrawing');
-                ed.bgImage = img; 
-                redrawEditor(ed); 
-            };
-            img.onerror = () => {
-                console.error('Failed to load image');
-            };
+            img.onload = () => { ed.bgImage = img; redrawEditor(ed); };
             img.src = e.target.result;
-        };
-        reader.onerror = () => {
-            console.error('Failed to read file');
         };
         reader.readAsDataURL(file);
     };
 
-    emptyState.addEventListener('click', (e) => {
-        e.stopPropagation(); // Prevent further event handling
-        fileInput.click();
-    });
-    fileInput.addEventListener('change', e => {
-        if (e.target.files?.length) {
-            loadAndDisplayImage(e.target.files[0]);
-        }
-    });
-    nodeEl.addEventListener('dragover', e => { 
-        e.preventDefault(); 
-        e.stopPropagation(); 
-        emptyState?.classList.add('drag-over'); 
-    });
-    nodeEl.addEventListener('dragleave', e => { 
-        e.preventDefault(); 
-        e.stopPropagation(); 
-        emptyState?.classList.remove('drag-over'); 
-    });
+    emptyState.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', e => e.target.files?.length && loadAndDisplayImage(e.target.files[0]));
+    nodeEl.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); emptyState?.classList.add('drag-over'); });
+    nodeEl.addEventListener('dragleave', e => { e.preventDefault(); e.stopPropagation(); emptyState?.classList.remove('drag-over'); });
     nodeEl.addEventListener('drop', e => {
-        e.preventDefault(); 
-        e.stopPropagation(); 
-        emptyState?.classList.remove('drag-over');
-        if (e.dataTransfer?.files.length) {
-            loadAndDisplayImage(e.dataTransfer.files[0]);
-        }
+        e.preventDefault(); e.stopPropagation(); emptyState?.classList.remove('drag-over');
+        if (e.dataTransfer?.files.length) loadAndDisplayImage(e.dataTransfer.files[0]);
     });
 }
 

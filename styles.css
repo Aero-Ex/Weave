@@ -781,3 +781,20 @@ button, .btn-icon, .modern-sidebar__button {
     background-color: var(--success-hover, #059669);
 }
 
+/* =========================================================
+  Transform Confirmation Button Styling
+  ========================================================= */
+.transform-confirm-button {
+    padding: var(--space-1) var (--space-2);
+    border-radius: var(--radius-1);
+    background-color: #10b981; /* Green color to distinguish from crop */
+    color: var(--fg);
+    font-size: var(--fs-100);
+    font-weight: 500;
+    transition: background-color 0.2s ease;
+}
+
+.transform-confirm-button:hover {
+    background-color: #059669; /* Darker green on hover */
+}
+
