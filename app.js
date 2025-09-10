@@ -574,7 +574,7 @@ function redrawEditor(ed) {
         ctx.fill();
         ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
         ctx.lineWidth = 1;
-        ctx.strokeRect(normBox.x, normBox.y, normBox.w, normBox.h);
+        ctx.strokeRect(normBox.x + 0.5, normBox.y + 0.5, normBox.w, normBox.h);
         
         if (ed.isCroppingActive) {
             ctx.fillStyle = "white";
@@ -731,7 +731,7 @@ function initializeImageEditorNode(nodeEl) {
                         ed.moveStart.image = { ...ed.bgImagePos };
                     }
                     break;
-                case 'pen': case 'eraser': case 'mask':
+                case 'pen': case 'eraser':
                     beforeSnapshot = canvas.toDataURL();
                     ed.drawing = true;
                     Object.assign(ctx, { lineCap: 'round', lineJoin: 'round', lineWidth: parseInt(thicknessSlider.value, 10) || 5 });
@@ -739,6 +739,8 @@ function initializeImageEditorNode(nodeEl) {
                     ctx.strokeStyle = (state.activeTool === 'eraser') ? 'rgba(0,0,0,1)' : colorPicker.value;
                     ctx.beginPath();
                     ctx.moveTo(p.x, p.y);
+                    ctx.lineTo(p.x, p.y);
+                    ctx.stroke();
                     break;
                 case 'text':
                     beforeSnapshot = canvas.toDataURL();
@@ -1057,7 +1059,7 @@ function bindEvents() {
             state.activeTool = tool;
             
             canvasEl.className = 'canvas'; // Reset classes
-            if (['pen', 'eraser', 'text', 'mask'].includes(tool)) {
+            if (['pen', 'eraser', 'text'].includes(tool)) {
                 canvasEl.classList.add('is-creative-tool-active');
             } else if (['move', 'select', 'crop', 'transform'].includes(tool)) {
                 canvasEl.classList.add(`is-${tool}-tool-active`);
