@@ -7,7 +7,7 @@
     <meta name="description" content="Node-based canvas with dotted grid, zoom controls, and minimap." />
     <title>Canvas — Dotted Grid with Minimap</title>
     <link rel="stylesheet" href="styles.css" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js" defer></script>
+    <!-- FIX: Removed unused fabric.js library -->
   </head>
   <body>
 
@@ -29,7 +29,6 @@
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v.008h.008V3.75H3.75Zm0 16.5v.008h.008v-.008H3.75Zm16.5 0v.008h.008v-.008h-.008Zm0-16.5v.008h.008V3.75h-.008ZM8.25 3.75h7.5v.008h-7.5V3.75Zm0 16.5h7.5v.008h-7.5v-.008ZM3.75 8.25v7.5h.008v-7.5H3.75Zm16.5 0v7.5h.008v-7.5h-.008Z" /></svg>
                 </button>
             </div>
-            <!-- History Tools -->
             <div class="top-toolbar__group">
                 <button id="undo-btn" class="top-toolbar__button" data-tooltip="Undo (Ctrl+Z)" disabled>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg>
@@ -39,7 +38,6 @@
                 </button>
             </div>
             <div class="top-toolbar__spacer"></div>
-            <!-- Creative Tools -->
             <div class="top-toolbar__group">
                 <button class="top-toolbar__button" data-tool="pen" data-tooltip="Pen (P)">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" /></svg>
@@ -54,7 +52,6 @@
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15.362 5.214A8.252 8.252 0 0 1 12 21 8.25 8.25 0 0 1 6.038 7.047 8.287 8.287 0 0 0 9 9.601a8.287 8.287 0 0 0 3-7.284 8.252 8.252 0 0 1 3.362 2.897Z" /></svg>
                 </button>
             </div>
-            <!-- Tool Settings -->
             <div class="top-toolbar__group top-toolbar__group--settings">
                 <div class="tool-setting" data-tooltip="Brush Color">
                     <input type="color" id="color-picker" class="tool-setting__color-input" value="#5a67d8">
@@ -78,25 +75,25 @@
         </nav>
         
       <section class="canvas" aria-label="Canvas workspace" data-locked="false">
-        <div class="canvas__world" id="world" role="presentation" aria-hidden="true">
+        <!-- FIX: Removed aria-hidden="true" for accessibility -->
+        <div class="canvas__world" id="world">
           
           <svg id="connections-svg" class="connections-layer" viewBox="0 0 4000 3000"></svg>
           
-          <div class="canvas-node" style="left: 1700px; top: 1400px; width: 400px; height: 500px" data-node-id="text-1" tabindex="0" aria-selected="false">
+          <div class="canvas-node" style="left: 1700px; top: 1400px; width: 400px; height: 180px" data-node-id="text-1" tabindex="0" aria-selected="false">
               <header class="canvas-node__header"><span>Text Prompt</span><span class="model-tag">User Input</span></header>
               <div class="canvas-node__content"><textarea id="prompt-input" class="prompt-textarea" placeholder="A futuristic cityscape at sunset...">A futuristic cityscape at sunset, neon lights, flying cars</textarea></div>
               <div class="canvas-node__resizer"></div>
           </div>
 
-          <div class="canvas-node" style="left: 2100px; top: 1400px; width: 400px; height: 500px" data-node-id="image-1" tabindex="0" aria-selected="false">
+          <div class="canvas-node" style="left: 1700px; top: 1620px; width: 400px; height: 300px" data-node-id="image-1" tabindex="0" aria-selected="false">
               <header class="canvas-node__header"><span>Image</span><span class="model-tag">Flux Dev</span></header>
               <div id="image-output" class="canvas-node__content canvas-node__content--output"><p class="placeholder-text">Image will be generated here</p></div>
                <div class="canvas-node__footer"><button id="generate-btn" class="generate-button" data-model="flux-1.1-pro" data-target-node="image-1">Generate</button></div>
                 <div class="canvas-node__resizer"></div>
           </div>
           
-          <!-- Draw-to-Edit Node -->
-          <div class="canvas-node" style="left: 2400px; top: 1400px; width: 400px; height: 500px" data-node-id="image-editor-1" tabindex="0" aria-selected="false">
+          <div class="canvas-node" style="left: 2150px; top: 1400px; width: 400px; height: 400px" data-node-id="image-editor-1" tabindex="0" aria-selected="false">
             <header class="canvas-node__header">
                 <span>Draw to Edit</span>
                 <span class="model-tag">Nano Banana</span>
@@ -115,7 +112,7 @@
                 <input type="text" class="editor-prompt-input" placeholder="Describe the edit...">
                 <button class="edit-mask-button">Edit</button>
                 <button class="crop-confirm-button" style="display:none;">Apply Crop</button>
-                <button class="transform-confirm-button" style="display:none;">Apply Transform</button>
+                <!-- FIX: Removed dead code (transform-confirm-button) -->
             </div>
             <div class="canvas-node__resizer"></div>
           </div>
@@ -135,13 +132,16 @@
         </ul>
       </nav>
 
-      <aside class="minimap" aria-label="Minimap preview"><canvas id="minimap" width="220" height="140"></canvas><div class="minimap__frame" id="minimapFrame"></div></aside>
+      <aside class="minimap" aria-label="Minimap preview">
+        <!-- The canvas that will be drawn to by renderMinimap() -->
+        <canvas id="minimap" width="220" height="165"></canvas>
+        <div class="minimap__frame" id="minimapFrame"></div>
+      </aside>
       
-      <!-- Accessibility Live Region -->
       <div class="sr-only" id="aria-live-region" aria-live="polite"></div>
     </main>
 
-    <!-- Node Templates -->
+    <!-- Node Templates (FIX: Now used by createNode function) -->
     <template id="node-template-text">
         <header class="canvas-node__header"><span>Text Prompt</span><span class="model-tag">User Input</span></header>
         <div class="canvas-node__content"><textarea class="prompt-textarea" placeholder="Describe what you want to create..."></textarea></div>
@@ -167,6 +167,11 @@
                 <span>Drop image to start</span>
                 <input type="file" accept="image/*" style="display: none;" />
             </div>
+        </div>
+        <div class="canvas-node__footer canvas-node__footer--editor">
+            <input type="text" class="editor-prompt-input" placeholder="Describe the edit...">
+            <button class="edit-mask-button">Edit</button>
+            <button class="crop-confirm-button" style="display:none;">Apply Crop</button>
         </div>
         <div class="canvas-node__resizer"></div>
     </template>

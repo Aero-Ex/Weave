@@ -13,7 +13,7 @@ const zoomInBtn = $("#zoomIn");
 const zoomOutBtn = $("#zoomOut");
 const lockBtn = $("#lockToggle");
 const zoomLabel = $("#zoomLabel");
-const minimap = $("#minimap");
+const minimapCanvas = $("#minimap");
 const mmFrame = $("#minimapFrame");
 const selectionBoxEl = $("#selectionBox");
 const topToolbar = $('.top-toolbar');
@@ -28,22 +28,39 @@ const ariaLiveRegion = $('#aria-live-region');
   ========================================================= */
 const state = {
     panX: 0, panY: 0, zoom: 1, locked: false,
-    isDraggingNode: false, isResizingNode: false,
-    resizedNode: null, selectedNodes: new Set(),
+    selectedNodes: new Set(),
     activeTool: 'move',
     activeEditorNode: null,
+    
+    // Encapsulated state for pointer actions to avoid global scope pollution
+    isPanning: false,
+    isBoxSelecting: false,
+    isDraggingNode: false,
+    isResizingNode: false,
+    resizedNode: null,
+
+    // Store transient data related to an ongoing pointer action
+    pointerAction: {
+        pointerStart: { x: 0, y: 0 },
+        panStart: { x: 0, y: 0 },
+        nodeDragStartPositions: new Map(),
+        nodeResizeStart: {},
+        initialSelectionOnDragStart: new Set(),
+        lastPointerX: 0,
+        lastPointerY: 0,
+        updateScheduled: false,
+    }
 };
-let isPanning = false, isBoxSelecting = false;
-let pointerStart = { x: 0, y: 0 };
-let panStart = { x: 0, y: 0 };
-let nodeDragStartPositions = new Map();
-let nodeResizeStart = {};
-let initialSelectionOnDragStart = new Set();
 const editor2dInstances = new Map();
 let isApplyingHistory = false;
-let lastPointerX = 0;
-let lastPointerY = 0;
-let updateScheduled = false;
+
+/* =========================================================
+  Constants
+  ========================================================= */
+const ZOOM = { min: 0.3, max: 2.0, step: 0.1, TRANSITION_DURATION: 220 };
+const WORLD = { w: 4000, h: 3000 };
+const GRID_SIZE = parseFloat(getComputedStyle(rootEl).getPropertyValue("--grid-size")) || 24;
+const EDITOR = { CROP_HANDLE_HITBOX: 8 };
 
 /* =========================================================
   Undo/Redo History Management
@@ -70,6 +87,7 @@ const history = {
         switch (action.type) {
             case 'create':
                 action.after.forEach(({ id }) => $(`[data-node-id="${id}"]`)?.remove());
+                renderMinimap(); // Update minimap on node removal
                 break;
             case 'editor:modify':
                 this.applyEditorState(action.nodeId, action.before, action.beforeMetadata);
@@ -81,7 +99,7 @@ const history = {
 
         this.index--;
         this.updateButtons();
-        setTimeout(() => isApplyingHistory = false, 50);
+        isApplyingHistory = false; // FIX: Removed fragile setTimeout
     },
 
     redo() {
@@ -94,7 +112,7 @@ const history = {
             case 'create':
                  action.after.forEach(nodeState => {
                     const type = nodeState.id.split('-')[0];
-                    createNode(type, 0, 0, nodeState);
+                    createNode(type, 0, 0, nodeState); // Position will be overridden by applyNodeState
                 });
                 break;
             case 'editor:modify':
@@ -105,7 +123,7 @@ const history = {
                 break;
         }
         this.updateButtons();
-        setTimeout(() => isApplyingHistory = false, 50);
+        isApplyingHistory = false; // FIX: Removed fragile setTimeout
     },
 
     applyNodeState(nodeStates) {
@@ -124,6 +142,7 @@ const history = {
                 }
             }
         });
+        renderMinimap(); // Update minimap after state is applied
     },
 
     applyEditorState(nodeId, dataUrl, metadata) {
@@ -161,13 +180,6 @@ function captureNodeState(nodes) {
     }));
 }
 
-
-/* =========================================================
-  Constants
-  ========================================================= */
-const ZOOM = { min: 0.3, max: 2.0, step: 0.1 };
-const WORLD = { w: 4000, h: 3000 };
-const GRID_SIZE = parseFloat(getComputedStyle(rootEl).getPropertyValue("--grid-size")) || 24;
 
 /* ===================================================================
    Core Canvas & Transform Functions
@@ -241,7 +253,7 @@ function zoomTo(nextZoom, center = null) {
     const panX = mouseX - worldX * zoom;
     const panY = mouseY - worldY * zoom;
     world.classList.add("is-zooming");
-    setTimeout(() => world.classList.remove("is-zooming"), 220);
+    setTimeout(() => world.classList.remove("is-zooming"), ZOOM.TRANSITION_DURATION);
     setTransform({ panX, panY, zoom });
 }
 
@@ -252,8 +264,6 @@ function zoomTo(nextZoom, center = null) {
 function onPointerDown(e) {
     if (state.locked || e.button !== 0) return;
     
-    // Editor nodes have their own pointerdown handlers which stop propagation.
-    // This code runs for events on the main canvas or non-editor nodes.
     const targetNode = e.target.closest('.canvas-node');
     const resizeHandle = e.target.closest('.canvas-node__resizer');
 
@@ -264,25 +274,25 @@ function onPointerDown(e) {
     } else if (state.activeTool === 'select') {
         handleBoxSelectStart(e);
     } else {
-        // Default action when clicking canvas background is to pan
         handlePanStart(e);
     }
 }
 
 function onPointerMove(e) {
     if (state.locked) return;
-    lastPointerX = e.clientX;
-    lastPointerY = e.clientY;
+    state.pointerAction.lastPointerX = e.clientX;
+    state.pointerAction.lastPointerY = e.clientY;
 
-    if (!updateScheduled) {
-        updateScheduled = true;
+    if (!state.pointerAction.updateScheduled) {
+        state.pointerAction.updateScheduled = true;
         requestAnimationFrame(updatePositions);
     }
 }
 
 function updatePositions() {
-    if (!updateScheduled) return;
+    if (!state.pointerAction.updateScheduled) return;
 
+    const { pointerStart, lastPointerX, lastPointerY, nodeResizeStart, nodeDragStartPositions, panStart } = state.pointerAction;
     const dx = lastPointerX - pointerStart.x;
     const dy = lastPointerY - pointerStart.y;
 
@@ -302,26 +312,27 @@ function updatePositions() {
             node.style.left = `${startPos.x + dx / state.zoom}px`;
             node.style.top = `${startPos.y + dy / state.zoom}px`;
         });
-    } else if (isBoxSelecting) {
+    } else if (state.isBoxSelecting) {
         handleBoxSelectMove({ clientX: lastPointerX, clientY: lastPointerY });
-    } else if (isPanning) {
+    } else if (state.isPanning) {
         setTransform({ panX: panStart.x + dx, panY: panStart.y + dy });
     }
 
-    updateScheduled = false;
+    state.pointerAction.updateScheduled = false;
 }
 
 function onPointerUp(e) {
-    updateScheduled = false;
+    state.pointerAction.updateScheduled = false;
     if (state.isResizingNode) {
         state.resizedNode.classList.remove('is-resizing');
         const afterState = captureNodeState([state.resizedNode]);
-        history.add({ type: 'resize', before: [nodeResizeStart.historyState], after: afterState });
+        history.add({ type: 'resize', before: [state.pointerAction.nodeResizeStart.historyState], after: afterState });
         state.isResizingNode = false;
         state.resizedNode = null;
+        renderMinimap();
     }
     if (state.isDraggingNode) {
-        const beforeState = Array.from(nodeDragStartPositions.entries()).map(([node, pos]) => ({ 
+        const beforeState = Array.from(state.pointerAction.nodeDragStartPositions.entries()).map(([node, pos]) => ({ 
             id: node.dataset.nodeId, left: `${pos.x}px`, top: `${pos.y}px`, 
             width: node.style.width, height: node.style.height 
         }));
@@ -329,13 +340,14 @@ function onPointerUp(e) {
         history.add({ type: 'move', before: beforeState, after: afterState });
         state.selectedNodes.forEach(node => node.classList.remove('is-dragging'));
         state.isDraggingNode = false;
+        renderMinimap();
     }
-    if (isBoxSelecting) {
-        isBoxSelecting = false;
+    if (state.isBoxSelecting) {
+        state.isBoxSelecting = false;
         selectionBoxEl.style.display = 'none';
         cachedNodesForSelection = [];
     }
-    isPanning = false;
+    state.isPanning = false;
     if (canvasEl.hasPointerCapture(e.pointerId)) {
         canvasEl.releasePointerCapture(e.pointerId);
     }
@@ -346,9 +358,9 @@ function handleNodeResizeStart(e, resizeHandle) {
     state.isResizingNode = true;
     state.resizedNode = resizeHandle.parentElement;
     state.resizedNode.classList.add('is-resizing');
-    pointerStart = { x: e.clientX, y: e.clientY };
+    state.pointerAction.pointerStart = { x: e.clientX, y: e.clientY };
 
-    nodeResizeStart = {
+    state.pointerAction.nodeResizeStart = {
         initialWidth: state.resizedNode.offsetWidth,
         initialHeight: state.resizedNode.offsetHeight,
         historyState: {
@@ -364,55 +376,59 @@ function handleNodeResizeStart(e, resizeHandle) {
 }
 
 function handleNodeDragStart(e, targetNode) {
-    // Prevent dragging node content from moving the node
     if (e.target.closest('.canvas-node__content')) return;
 
     if (e.shiftKey) toggleNodeSelection(targetNode);
     else if (!state.selectedNodes.has(targetNode)) selectSingleNode(targetNode);
+    
     state.isDraggingNode = true;
-    pointerStart = { x: e.clientX, y: e.clientY };
-    nodeDragStartPositions.clear();
+    state.pointerAction.pointerStart = { x: e.clientX, y: e.clientY };
+    state.pointerAction.nodeDragStartPositions.clear();
     state.selectedNodes.forEach(node => {
         node.classList.add('is-dragging');
-        nodeDragStartPositions.set(node, { x: node.offsetLeft, y: node.offsetTop });
+        state.pointerAction.nodeDragStartPositions.set(node, { x: node.offsetLeft, y: node.offsetTop });
     });
     canvasEl.setPointerCapture(e.pointerId);
 }
 
 let cachedNodesForSelection = [];
 function handleBoxSelectStart(e) {
-    isBoxSelecting = true;
+    state.isBoxSelecting = true;
     cachedNodesForSelection = $$('.canvas-node');
     if (!e.shiftKey) clearSelection();
-    initialSelectionOnDragStart = new Set(state.selectedNodes);
-    pointerStart = { x: e.clientX, y: e.clientY };
+    state.pointerAction.initialSelectionOnDragStart = new Set(state.selectedNodes);
+    state.pointerAction.pointerStart = { x: e.clientX, y: e.clientY };
     const worldPoint = screenToWorld(e.clientX, e.clientY);
     Object.assign(selectionBoxEl.style, { left: `${worldPoint.x}px`, top: `${worldPoint.y}px`, width: '0px', height: '0px', display: 'block' });
     canvasEl.setPointerCapture(e.pointerId);
 }
 
 function handlePanStart(e) {
-    isPanning = true;
-    pointerStart = { x: e.clientX, y: e.clientY };
-    panStart = { x: state.panX, y: state.panY };
+    state.isPanning = true;
+    state.pointerAction.pointerStart = { x: e.clientX, y: e.clientY };
+    state.pointerAction.panStart = { x: state.panX, y: state.panY };
     if (!e.shiftKey) clearSelection();
     canvasEl.setPointerCapture(e.pointerId);
 }
 
 function handleBoxSelectMove(e) {
-    const startPoint = screenToWorld(pointerStart.x, pointerStart.y);
+    const startPoint = screenToWorld(state.pointerAction.pointerStart.x, state.pointerAction.pointerStart.y);
     const currentPoint = screenToWorld(e.clientX, e.clientY);
     const boxLeft = Math.min(startPoint.x, currentPoint.x);
     const boxTop = Math.min(startPoint.y, currentPoint.y);
     const boxWidth = Math.abs(startPoint.x - currentPoint.x);
     const boxHeight = Math.abs(startPoint.y - currentPoint.y);
     Object.assign(selectionBoxEl.style, { left: `${boxLeft}px`, top: `${boxTop}px`, width: `${boxWidth}px`, height: `${boxHeight}px` });
-    const nodesToSelect = new Set(initialSelectionOnDragStart);
+    
+    const nodesToSelect = new Set(state.pointerAction.initialSelectionOnDragStart);
     cachedNodesForSelection.forEach(node => {
         const nodeLeft = node.offsetLeft, nodeTop = node.offsetTop, nodeWidth = node.offsetWidth, nodeHeight = node.offsetHeight;
         const intersects = (boxLeft < nodeLeft + nodeWidth && boxLeft + boxWidth > nodeLeft && boxTop < nodeTop + nodeHeight && boxTop + boxHeight > nodeTop);
-        if (intersects) nodesToSelect.add(node);
-        else if (!initialSelectionOnDragStart.has(node)) nodesToSelect.delete(node);
+        if (intersects) {
+            nodesToSelect.add(node);
+        } else if (!state.pointerAction.initialSelectionOnDragStart.has(node)) {
+            nodesToSelect.delete(node);
+        }
     });
     updateNodeSelection(nodesToSelect);
 }
@@ -443,27 +459,39 @@ function getRelativePointerPos(event, element) {
     };
 }
 
+// FIX: Refactored to use HTML <template> elements for maintainability
 function createNode(type, x, y, restorationState = null) {
     const nodeId = restorationState ? restorationState.id : `${type}-${Date.now()}`;
     if ($(`[data-node-id="${nodeId}"]`)) return;
+
+    const template = $(`#node-template-${type}`);
+    if (!template) {
+        console.error("Unknown node type:", type);
+        return;
+    }
+
     const nodeEl = document.createElement('div');
     nodeEl.className = 'canvas-node';
     nodeEl.dataset.nodeId = nodeId;
     nodeEl.tabIndex = 0;
     nodeEl.setAttribute('aria-selected', 'false');
-    const nodeTemplates = {
-        text: `<header class="canvas-node__header"><span>Text Prompt</span><span class="model-tag">User Input</span></header><div class="canvas-node__content"><textarea class="prompt-textarea" placeholder="Describe what you want to create..."></textarea></div><div class="canvas-node__resizer"></div>`,
-        'image-upload': `<header class="canvas-node__header"><span>Image Upload</span><span class="model-tag">Local File</span></header><div class="canvas-node__content canvas-node__content--image-upload"><div class="image-upload-empty-state"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg><span>Upload or drop image</span></div><input type="file" accept="image/*" style="display: none;" /></div><div class="canvas-node__resizer"></div>`,
-        'image-editor': `<header class="canvas-node__header"><span>Draw to Edit</span><span class="model-tag">Nano Banana</span></header><div class="canvas-node__content canvas-node__content--editor"><div class="editor-canvas-container"><canvas class="image-editor-canvas"></canvas></div><div class="editor-empty-state"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg><span>Drop image to start</span><input type="file" accept="image/*" style="display: none;" /></div></div><div class="canvas-node__footer canvas-node__footer--editor"><input type="text" class="editor-prompt-input" placeholder="Describe the edit..."><button class="edit-mask-button">Edit</button><button class="crop-confirm-button" style="display:none;">Apply Crop</button></div><div class="canvas-node__resizer"></div>`
-    };
-    if (!nodeTemplates[type]) { console.error("Unknown node type:", type); return; }
-    nodeEl.innerHTML = nodeTemplates[type];
-    if (restorationState) Object.assign(nodeEl.style, { left: restorationState.left, top: restorationState.top, width: restorationState.width, height: restorationState.height });
-    else Object.assign(nodeEl.style, { left: `${x}px`, top: `${y}px`, width: '280px' });
+    nodeEl.innerHTML = template.innerHTML;
+
+    if (restorationState) {
+        Object.assign(nodeEl.style, { left: restorationState.left, top: restorationState.top, width: restorationState.width, height: restorationState.height });
+    } else {
+        Object.assign(nodeEl.style, { left: `${x}px`, top: `${y}px`, width: '280px' });
+    }
+    
     world.appendChild(nodeEl);
+    
     if (type === 'image-upload') initializeImageUploadNode(nodeEl);
     if (type === 'image-editor') initializeImageEditorNode(nodeEl);
-    if (!restorationState) history.add({ type: 'create', before: [], after: captureNodeState([nodeEl]) });
+
+    if (!restorationState) {
+        history.add({ type: 'create', before: [], after: captureNodeState([nodeEl]) });
+    }
+    renderMinimap(); // Update minimap after creating a node
 }
 
 function showAddNodeMenu(e) {
@@ -650,25 +678,16 @@ function initializeImageEditorNode(nodeEl) {
     const onEditorPointerUp = (e) => {
         if (ed.isDefiningCropArea) {
             ed.isDefiningCropArea = false;
-            
-            // Normalize the crop box
-            if (ed.cropBox.w < 0) {
-                ed.cropBox.x += ed.cropBox.w;
-                ed.cropBox.w = Math.abs(ed.cropBox.w);
-            }
-            if (ed.cropBox.h < 0) {
-                ed.cropBox.y += ed.cropBox.h;
-                ed.cropBox.h = Math.abs(ed.cropBox.h);
-            }
+            if (ed.cropBox.w < 0) { ed.cropBox.x += ed.cropBox.w; ed.cropBox.w = Math.abs(ed.cropBox.w); }
+            if (ed.cropBox.h < 0) { ed.cropBox.y += ed.cropBox.h; ed.cropBox.h = Math.abs(ed.cropBox.h); }
 
             if(ed.cropBox.w > 5 && ed.cropBox.h > 5) {
                 ed.isCroppingActive = true;
                 updateCropHandles(ed);
-                redrawEditor(ed);
             } else {
                 ed.isCroppingActive = false;
-                redrawEditor(ed); // Redraw to remove the tiny box
             }
+            redrawEditor(ed);
         }
 
         ed.isMovingImage = false;
@@ -680,7 +699,7 @@ function initializeImageEditorNode(nodeEl) {
             ed.drawing = false;
             const after = canvas.toDataURL();
             const metadata = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale };
-            const beforeMeta = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale }; // Capture state before drawing
+            const beforeMeta = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale };
             if (!isApplyingHistory && beforeSnapshot && after !== beforeSnapshot) {
                 history.add({ type: 'editor:modify', nodeId: ed.nodeId, before: beforeSnapshot, after, metadata, beforeMetadata: beforeMeta });
             }
@@ -793,49 +812,32 @@ function endCrop(ed, apply) {
             const beforeMeta = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale };
 
             const imgRect = getDrawnImageRect(ed);
+            if (imgRect.w <= 0 || imgRect.h <= 0) {
+                console.error('Invalid image dimensions for cropping');
+            } else {
+                const sourceX = ((x - imgRect.x) / imgRect.w) * ed.bgImage.width;
+                const sourceY = ((y - imgRect.y) / imgRect.h) * ed.bgImage.height;
+                const sourceW = (w / imgRect.w) * ed.bgImage.width;
+                const sourceH = (h / imgRect.h) * ed.bgImage.height;
 
-// Ensure we have valid image dimensions
-if (imgRect.w <= 0 || imgRect.h <= 0) {
-    console.error('Invalid image dimensions for cropping');
-    ed.isCroppingActive = false;
-    ed.isDefiningCropArea = false;
-    redrawEditor(ed);
-    return;
-}
-
-// Calculate crop area relative to the drawn image in original image pixels
-const sourceX = ((x - imgRect.x) / imgRect.w) * ed.bgImage.width;
-const sourceY = ((y - imgRect.y) / imgRect.h) * ed.bgImage.height;
-const sourceW = (w / imgRect.w) * ed.bgImage.width;
-const sourceH = (h / imgRect.h) * ed.bgImage.height;
-
-const finalCanvas = document.createElement('canvas');
-finalCanvas.width = Math.max(1, sourceW);
-finalCanvas.height = Math.max(1, sourceH);
-finalCanvas.getContext('2d').drawImage(
-    ed.bgImage,
-    sourceX,
-    sourceY,
-    sourceW,
-    sourceH,
-    0,
-    0,
-    finalCanvas.width,
-    finalCanvas.height
-);
-            
-            const newImage = new Image();
-            newImage.onload = () => {
-                ed.bgImage = newImage;
-                ed.bgImagePos = { x: 0, y: 0 };
-                ed.bgImageScale = 1;
-                redrawEditor(ed); // Redraw with new cropped image
+                const finalCanvas = document.createElement('canvas');
+                finalCanvas.width = Math.max(1, sourceW);
+                finalCanvas.height = Math.max(1, sourceH);
+                finalCanvas.getContext('2d').drawImage(ed.bgImage, sourceX, sourceY, sourceW, sourceH, 0, 0, finalCanvas.width, finalCanvas.height);
                 
-                const after = newImage.src;
-                const afterMeta = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale };
-                history.add({ type: 'editor:modify', nodeId: ed.nodeId, before, after, metadata: afterMeta, beforeMetadata: beforeMeta });
-            };
-            newImage.src = finalCanvas.toDataURL();
+                const newImage = new Image();
+                newImage.onload = () => {
+                    ed.bgImage = newImage;
+                    ed.bgImagePos = { x: 0, y: 0 };
+                    ed.bgImageScale = 1;
+                    redrawEditor(ed);
+                    
+                    const after = newImage.src;
+                    const afterMeta = { pos: { ...ed.bgImagePos }, scale: ed.bgImageScale };
+                    history.add({ type: 'editor:modify', nodeId: ed.nodeId, before, after, metadata: afterMeta, beforeMetadata: beforeMeta });
+                };
+                newImage.src = finalCanvas.toDataURL();
+            }
         }
     }
     
@@ -844,7 +846,6 @@ finalCanvas.getContext('2d').drawImage(
     ed.activeHandle = null;
     ed.isMovingCropBox = false;
     ed.canvas.style.cursor = 'crosshair';
-
     redrawEditor(ed);
 }
 
@@ -852,8 +853,7 @@ function handleCropPointerDown(e, ed) {
     const pos = getRelativePointerPos(e, ed.canvas);
     
     if (ed.isCroppingActive) {
-        const handleHitbox = 8;
-        ed.activeHandle = ed.handles.find(h => Math.abs(pos.x - h.x) < handleHitbox && Math.abs(pos.y - h.y) < handleHitbox) || null;
+        ed.activeHandle = ed.handles.find(h => Math.abs(pos.x - h.x) < EDITOR.CROP_HANDLE_HITBOX && Math.abs(pos.y - h.y) < EDITOR.CROP_HANDLE_HITBOX) || null;
         
         if (ed.activeHandle) {
             ed.isMovingCropBox = false;
@@ -881,66 +881,47 @@ function handleCropPointerMove(e, ed) {
     if (ed.isDefiningCropArea) {
         ed.cropBox.w = dx;
         ed.cropBox.h = dy;
-        redrawEditor(ed);
     } else if (ed.activeHandle) {
         const { name } = ed.activeHandle;
         const start = ed.cropStartBox;
         
-        // Apply handle movement
         if (name.includes('l')) { ed.cropBox.x = start.x + dx; ed.cropBox.w = start.w - dx; }
         if (name.includes('r')) { ed.cropBox.w = start.w + dx; }
         if (name.includes('t')) { ed.cropBox.y = start.y + dy; ed.cropBox.h = start.h - dy; }
         if (name.includes('b')) { ed.cropBox.h = start.h + dy; }
 
-        // Apply aspect ratio constraint for corner handles when Shift is held
         if (e.shiftKey && (name === 'tl' || name === 'tr' || name === 'bl' || name === 'br')) {
             if (Math.abs(start.w) > 0 && Math.abs(start.h) > 0) {
                 const aspect = Math.abs(start.w / start.h);
-                
-                // Determine which dimension changed more
                 const wChange = Math.abs(ed.cropBox.w) - Math.abs(start.w);
                 const hChange = Math.abs(ed.cropBox.h) - Math.abs(start.h);
-                
                 if (Math.abs(wChange) > Math.abs(hChange)) {
-                    // Width changed more, adjust height
-                    ed.cropBox.h = Math.abs(ed.cropBox.w) / aspect;
-                    if (start.h < 0) ed.cropBox.h = -ed.cropBox.h;
+                    ed.cropBox.h = Math.sign(ed.cropBox.h) * Math.abs(ed.cropBox.w) / aspect;
                 } else {
-                    // Height changed more, adjust width
-                    ed.cropBox.w = Math.abs(ed.cropBox.h) * aspect;
-                    if (start.w < 0) ed.cropBox.w = -ed.cropBox.w;
+                    ed.cropBox.w = Math.sign(ed.cropBox.w) * Math.abs(ed.cropBox.h) * aspect;
                 }
-                
-                // Adjust position for left/top handles
                 if (name.includes('l')) ed.cropBox.x = start.x + start.w - ed.cropBox.w;
                 if (name.includes('t')) ed.cropBox.y = start.y + start.h - ed.cropBox.h;
             }
         }
-
         updateCropHandles(ed);
-        redrawEditor(ed);
     } else if (ed.isMovingCropBox) {
         const start = ed.cropStartBox;
         ed.cropBox.x = start.x + dx;
         ed.cropBox.y = start.y + dy;
         updateCropHandles(ed);
-        redrawEditor(ed);
     } else {
-        // Update cursor based on hover
-        const handle = ed.handles.find(h => Math.abs(pos.x - h.x) < 8 && Math.abs(pos.y - h.y) < 8);
+        const handle = ed.handles.find(h => Math.abs(pos.x - h.x) < EDITOR.CROP_HANDLE_HITBOX && Math.abs(pos.y - h.y) < EDITOR.CROP_HANDLE_HITBOX);
         if (handle) {
             ed.canvas.style.cursor = handle.cursor;
-        } else if (pos.x > ed.cropBox.x && pos.x < ed.cropBox.x + ed.cropBox.w && 
-                   pos.y > ed.cropBox.y && pos.y < ed.cropBox.y + ed.cropBox.h) {
+        } else if (pos.x > ed.cropBox.x && pos.x < ed.cropBox.x + ed.cropBox.w && pos.y > ed.cropBox.y && pos.y < ed.cropBox.y + ed.cropBox.h) {
             ed.canvas.style.cursor = 'move';
         } else {
             ed.canvas.style.cursor = 'crosshair';
         }
     }
+    redrawEditor(ed);
 }
-
-
-function updateAllEditorTools() {}
 
 function initializeDraggableSidebar() {
     const sidebar = $('.modern-sidebar'); if (!sidebar) return;
@@ -992,11 +973,33 @@ function updateMinimapFrame() {
     mmFrame.style.setProperty("--v-bottom", `${clamp(bottomPct, 0, 100)}%`);
 }
 
+// FIX: New function to render the minimap content
+function renderMinimap() {
+    if (!minimapCanvas) return;
+    const ctx = minimapCanvas.getContext('2d');
+    const nodes = $$('.canvas-node');
+    const scaleX = minimapCanvas.width / WORLD.w;
+    const scaleY = minimapCanvas.height / WORLD.h;
+    
+    ctx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+    ctx.fillStyle = 'rgba(150, 163, 179, 0.4)';
+
+    nodes.forEach(node => {
+        const x = node.offsetLeft * scaleX;
+        const y = node.offsetTop * scaleY;
+        const w = node.offsetWidth * scaleX;
+        const h = node.offsetHeight * scaleY;
+        ctx.fillRect(x, y, w, h);
+    });
+}
+
 function onMinimapClick(e) {
     if (state.locked) return;
-    const box = minimap.getBoundingClientRect();
-    const targetWorldX = (e.clientX - box.left) / box.width * WORLD.w, targetWorldY = (e.clientY - box.top) / box.height * WORLD.h;
-    const panX = (canvasEl.clientWidth / 2) - (targetWorldX * state.zoom), panY = (canvasEl.clientHeight / 2) - (targetWorldY * state.zoom);
+    const box = minimap.parentElement.getBoundingClientRect();
+    const targetWorldX = (e.clientX - box.left) / box.width * WORLD.w;
+    const targetWorldY = (e.clientY - box.top) / box.height * WORLD.h;
+    const panX = (canvasEl.clientWidth / 2) - (targetWorldX * state.zoom);
+    const panY = (canvasEl.clientHeight / 2) - (targetWorldY * state.zoom);
     setTransform({ panX, panY });
 }
 
@@ -1004,13 +1007,8 @@ function handleKeyboard(e) {
     if (['textarea', 'input'].includes(e.target.tagName.toLowerCase())) return;
 
     if (state.activeEditorNode && (state.activeEditorNode.isCroppingActive || state.activeEditorNode.isDefiningCropArea)) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            endCrop(state.activeEditorNode, true);
-        } else if (e.key === 'Escape') {
-            e.preventDefault();
-            endCrop(state.activeEditorNode, false);
-        }
+        if (e.key === 'Enter') { e.preventDefault(); endCrop(state.activeEditorNode, true); } 
+        else if (e.key === 'Escape') { e.preventDefault(); endCrop(state.activeEditorNode, false); }
         return;
     }
 
@@ -1032,6 +1030,7 @@ function handleKeyboard(e) {
             node.style.top = `${top}px`;
         });
         history.add({ type: 'move', before: beforeState, after: captureNodeState(state.selectedNodes) });
+        renderMinimap();
     }
 }
 
@@ -1053,13 +1052,11 @@ function bindEvents() {
             if (state.activeTool === 'crop' && tool !== 'crop' && state.activeEditorNode) {
                  endCrop(state.activeEditorNode, false);
             }
-
             $$('.top-toolbar__button').forEach(btn => btn.classList.remove('is-active'));
             button.classList.add('is-active');
             state.activeTool = tool;
             
-            canvasEl.classList.remove('is-creative-tool-active', 'is-move-tool-active', 'is-select-tool-active', 'is-crop-tool-active', 'is-transform-tool-active');
-            
+            canvasEl.className = 'canvas'; // Reset classes
             if (['pen', 'eraser', 'text', 'mask'].includes(tool)) {
                 canvasEl.classList.add('is-creative-tool-active');
             } else if (['move', 'select', 'crop', 'transform'].includes(tool)) {
@@ -1068,11 +1065,10 @@ function bindEvents() {
         }
     });
 
-    colorPicker.addEventListener('input', updateAllEditorTools);
-    thicknessSlider.addEventListener('input', updateAllEditorTools);
     undoBtn.addEventListener('click', () => history.undo());
     redoBtn.addEventListener('click', () => history.redo());
 
+    // FIX: Moved initialization calls here to avoid redundancy
     initializeDraggableSidebar();
     initializeSidebarToggles();
 }
@@ -1082,17 +1078,19 @@ function init() {
     const initialPanX = (canvasEl.clientWidth / 2) - (WORLD.w * initialZoom / 2);
     const initialPanY = (canvasEl.clientHeight / 2) - (WORLD.h * initialZoom / 2);
     setTransform({ panX: initialPanX, panY: initialPanY, zoom: initialZoom });
+    
     bindEvents();
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
-    initializeDraggableSidebar();
-    initializeSidebarToggles();
+
     $$('.canvas-node').forEach(nodeEl => {
-        if (nodeEl.dataset.nodeId.startsWith('image-editor-')) initializeImageEditorNode(nodeEl);
-        else if (nodeEl.dataset.nodeId.startsWith('image-upload-')) initializeImageUploadNode(nodeEl);
+        const nodeId = nodeEl.dataset.nodeId || '';
+        if (nodeId.startsWith('image-editor')) initializeImageEditorNode(nodeEl);
+        else if (nodeId.startsWith('image-upload')) initializeImageUploadNode(nodeEl);
     });
-    // Set initial tool class
+
     $(`.top-toolbar__button[data-tool="${state.activeTool}"]`)?.click();
+    renderMinimap(); // Initial render of the minimap
     console.log("Canvas ready.");
 }
 
